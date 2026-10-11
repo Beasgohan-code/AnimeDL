@@ -145,6 +145,94 @@ def _extract_token(html: str) -> Optional[str]:
 
 
 # ------------------------------------------------------------- megaplay path
+
+
+# --------------------------------------------------------------------------
+#  KEY-LESS extraction (ported from abhinai2244/AniwatchTvdl — cantarellabots)
+#  Handles megacloud "e-1" embeds with NO external key repo: the client key
+#  comes from the embed page itself and string deobfuscation is an LCG +
+#  shuffle. This is the independent fallback when the whole key chain fails.
+# --------------------------------------------------------------------------
+def _hash_str(key: str) -> int:
+    kv = 0
+    for ch in key:
+        kv = (kv * 31 + ord(ch)) & 0xFFFFFFFF
+    return kv
+
+
+def _lcg(n: int) -> int:
+    return (n * 1103515245 + 12345) & 0x7FFFFFFF
+
+
+def _keyless_extract(embed_url: str) -> Optional[dict]:
+    sid_m = re.search(r"e-1/([a-zA-Z0-9]+)", embed_url)
+    if not sid_m:
+        return None
+    sid = sid_m.group(1)
+    try:
+        page = _get(embed_url)
+        html = page.text if page is not None else ""
+        m = re.search(r'([a-zA-Z0-9]{48})|x: "([a-zA-Z0-9]{16})", y: "([a-zA-Z0-9]{16})", z: "([a-zA-Z0-9]{16})"}', html)
+        if not m:
+            return None
+        client_key = m.group(1) or "".join(x for x in m.groups()[1:] if x)
+
+        from anime_sources.base import http_session
+        r = http_session().get(
+            "https://megacloud.tv/embed-2/v3/e-1/getSources",
+            params={"id": sid, "_k": client_key},
+            headers={"Referer": embed_url},
+            timeout=(6, 15),
+        )
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        if isinstance(data.get("sources"), str):
+            chars = list(data["sources"])
+            cur = _hash_str(client_key)
+            out = []
+            for ch in chars:
+                cur = _lcg(cur)
+                out.append(chr((ord(ch) - 32 - (cur % 95)) % 95 + 32))
+            # key-sorted unshuffle (inverse of the site's shuffle)
+            if client_key:
+                arr_count = len(out) // len(client_key)
+                arrays = [[""] * len(client_key) for _ in range(arr_count)]
+                order = sorted(range(len(client_key)), key=lambda i: client_key[i])
+                p2 = 0
+                for idx in order:
+                    for a in range(arr_count):
+                        if p2 < len(out):
+                            arrays[a][idx] = out[p2]
+                            p2 += 1
+                flat = [x for arr in arrays for x in arr]
+                # the site SHUFFLED with this same order — inverse is reading
+                # positionally, so try both readings
+                try_a = "".join(out)
+                try_b = "".join(flat)
+                parsed = None
+                for cand in (try_a, try_b):
+                    try:
+                        parsed = json.loads(cand)
+                        break
+                    except Exception:
+                        continue
+                if parsed is None:
+                    return None
+                # decoded payload may be the bare sources ARRAY or the full
+                # {"sources": […], "tracks": […]} object — accept both
+                if isinstance(parsed, dict):
+                    if parsed.get("sources"):
+                        data["sources"] = parsed["sources"]
+                    if parsed.get("tracks"):
+                        data["tracks"] = parsed["tracks"]
+                else:
+                    data["sources"] = parsed
+        return data if data.get("sources") else None
+    except Exception:
+        return None
+
+
 def megaplay_fallback(ep_id: str, mode: str = "sub") -> Optional[dict]:
     """Direct route via megaplay.buzz / vidwish.live (no token, no AES).
 
@@ -209,5 +297,16 @@ def get_megacloud_stream(embed_url: str, referer: str = "https://hianime.to/",
                         if decrypted and decrypted[0].get("file"):
                             return {"file": decrypted[0]["file"],
                                     "tracks": data.get("tracks", [])}
+
+    # Key-chain independent path (Cantarella port): e-1 embeds decrypt via
+    # the client key embedded in the page itself — works even when every
+    # key repo on GitHub is dead.
+    keyless = _keyless_extract(embed_url)
+    if keyless:
+        src = keyless.get("sources") or []
+        if isinstance(src, list) and src and src[0].get("file"):
+            tracks = [t for t in (keyless.get("tracks") or [])
+                      if isinstance(t, dict) and t.get("file")]
+            return {"file": src[0]["file"], "tracks": tracks}
 
     return megaplay_fallback(ep_id, mode)

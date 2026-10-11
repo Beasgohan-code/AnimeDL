@@ -39,6 +39,9 @@ from anime_sources.base import (
 
 BASE = "https://animepahe.si"
 API = f"{BASE}/api"
+# .si occasionally returns empty result sets; the .ru mirror serves the
+# same API and often answers when .si does not.
+API_MIRRORS = [API, "https://animepahe.ru/api"]
 
 
 class AnimePaheSource(BaseProvider):
@@ -69,7 +72,14 @@ class AnimePaheSource(BaseProvider):
 
     # ---------------------------------------------------------------- search
     def search(self, query: str) -> list:
-        data = self._get(API, params={"m": "search", "q": quote_plus(query)}).json()
+        data = {}
+        for api in API_MIRRORS:  # .si empty → retry on .ru mirror
+            try:
+                data = self._get(api, params={"m": "search", "q": quote_plus(query)}).json()
+            except Exception:
+                continue
+            if (data.get("data") or []):
+                break
         results = []
         for anime in data.get("data", []) or []:
             results.append(SearchResult(

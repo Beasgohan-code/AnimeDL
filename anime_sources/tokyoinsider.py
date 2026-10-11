@@ -84,7 +84,7 @@ class TokyoInsiderSource(BaseProvider):
         scored = []
         for name, href in self._anime_list():
             score = _score(name, query)
-            if score >= 0.60:
+            if score >= 0.45:
                 scored.append((score, name, href))
         scored.sort(key=lambda x: x[0], reverse=True)
         return [

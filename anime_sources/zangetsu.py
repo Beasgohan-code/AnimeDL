@@ -110,6 +110,12 @@ class ZangetsuSource(BaseProvider):
 
     # ---------------------------------------------------------------- search
     def search(self, query: str) -> list:
+        # /search now sits behind the same AJAX_TOKEN cookie as the API —
+        # without bootstrap the page 200s but yields zero results
+        try:
+            self._bootstrap()
+        except Exception:
+            pass
         page = http_session().get(
             f"{BASE}/search?keyword={quote_plus(query)}",
             headers={"User-Agent": DEFAULT_UA, "Referer": f"{BASE}/home"},

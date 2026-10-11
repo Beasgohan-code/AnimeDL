@@ -59,9 +59,12 @@ class GogoSource(BaseProvider):
     # ---------------------------------------------------------------- search
     def search(self, query: str) -> list:
         resp = self._fetch("/search.html", params={"keyword": query})
+        body = resp.text
+        if "Just a moment" in body or "cf-browser-verification" in body:
+            raise SourceError("Gogo: search is behind a Cloudflare challenge right now")
         results = []
         for m in re.finditer(
-            r'<p class="name">\s*<a href="(/category/[^"]+)"[^>]*>([^<]+)</a>', resp.text
+            r'<p class="name">\s*<a href="(/category/[^"]+)"[^>]*>([^<]+)</a>', body
         ):
             slug = m.group(1).split("/category/")[-1]
             results.append(SearchResult(id=slug, title=m.group(2).strip(), provider=self.id))
