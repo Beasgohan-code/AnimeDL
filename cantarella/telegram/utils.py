@@ -46,6 +46,8 @@ async def set_bot_commands(client: Client):
         BotCommand("rss_check", "🔍 Cʜᴇᴄᴋ RSS ғᴇᴇᴅs ɴᴏᴡ"),
         # ── Owner / maintenance ──
         BotCommand("ping", "🏓 Cʜᴇᴄᴋ ʙᴏᴛ ʟᴀᴛᴇɴᴄʏ"),
+        BotCommand("health", "❇️ Fᴜʟʟ ʀᴇʟɪᴀʙɪʟɪᴛʏ ᴅᴀꜱʜʙᴏᴀʀᴅ (Aᴅᴍɪɴ)"),
+        BotCommand("setrestart", "⏰ Sᴄʜᴇᴅᴜʟᴇ ᴅᴀɪʟʏ ʀᴇsᴛᴀʀᴛ (Oᴡɴᴇʀ)"),
         BotCommand("restart", "🔄 Rᴇsᴛᴀʀᴛ ᴛʜᴇ ʙᴏᴛ (Aᴅᴍɪɴ)"),
         BotCommand("broadcast", "📡 Bʀᴏᴀᴅᴄᴀsᴛ ᴀ ᴍᴇssᴀɢᴇ (Aᴅᴍɪɴ)"),
     ]

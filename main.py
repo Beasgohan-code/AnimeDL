@@ -79,13 +79,21 @@ async def handle_root(request):
 async def handle_health(request):
     from leechbot.utility.variables import BOT, Queue
 
-    return web.json_response({
+    payload = {
         "status": "ok",
         "version": config.VERSION,
         "uptime_s": int((datetime.utcnow() - START_TIME).total_seconds()),
         "leech_task_active": bool(getattr(BOT.State, "task_going", False)),
         "queue_size": Queue.size() if hasattr(Queue, "size") else 0,
-    })
+    }
+    try:
+        import reliability
+        payload["keepalive"] = reliability.keepalive.stats()
+        payload["watchdog"] = reliability.watchdog.stats()
+        payload["status"] = "degraded" if reliability.watchdog.disk_pressure else "ok"
+    except Exception:
+        pass
+    return web.json_response(payload)
 
 
 async def start_health_server():
@@ -198,6 +206,10 @@ async def run():
     from cantarella.telegram.ongoing import ongoing_task
     asyncio.create_task(ongoing_task(app))
 
+    # Reliability layer: keep-alive pinger + watchdog
+    import reliability
+    reliability.start(app)
+
     logger.info("🚀 AnimeDL v%s fully started", config.VERSION)
     import pyrogram
     await pyrogram.idle()
@@ -208,6 +220,8 @@ async def run():
         BOT.State.shutting_down = True
         from leechbot.utility.rss_manager import stop_rss_poller
         stop_rss_poller()
+        import reliability
+        await reliability.stop_all()
     except Exception:
         pass
     logger.info("🛑 Shutdown signal received — draining…")

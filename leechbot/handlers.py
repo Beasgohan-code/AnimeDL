@@ -81,6 +81,22 @@ async def handle_url(client, message):
     """
     from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+    # Disk-pressure guard — the watchdog refuses tasks when space is critical
+    try:
+        import reliability
+        if reliability.watchdog.disk_pressure:
+            msg = await message.reply_text(
+                "<b>💽 Disk space critically low — task refused.</b>\n"
+                "Old downloads are being cleaned up. Please try again in a few minutes.",
+            )
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            return
+    except ImportError:
+        pass
+
     # Reset options
     BOT.Options.custom_name = ""
     BOT.Options.zip_pswd = ""

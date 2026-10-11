@@ -10,6 +10,8 @@ from cantarella.core.database import db
 from cantarella.core.images import get_random_image
 from cantarella.core.utils import decode_data, encode_data
 from config import OWNER_ID, START_PIC
+import uikit
+import config
 from Script import Dead
 from cantarella.telegram.decorators import check_ban, check_fsub
 
@@ -311,3 +313,98 @@ async def handle_help(client: Client, message):
     except Exception as e:
         logger.error(f"Error in help command: {e}")
         await message.reply_text("An error occurred while processing your request.")
+
+# ─────────────────────────────────────────────
+#  /health — full reliability dashboard
+# ─────────────────────────────────────────────
+@Client.on_message(filters.private & filters.command("health") & admin)
+async def handle_health_cmd(client: Client, message):
+    import reliability
+
+    kd = reliability.watchdog.stats()
+    ka = reliability.keepalive.stats()
+    from leechbot.utility.helper import getTime
+    from leechbot.utility.variables import BOT, Queue, BotStats
+    from datetime import datetime as _dt
+
+    uptime = getTime(int((_dt.now() - BotStats.start_time).total_seconds()))
+    mem_pct = min(100, int(kd["mem_rss_mb"] / max(1, config.WATCHDOG_MEM_HARD_MB) * 100))
+    disk_pct = 100
+    try:
+        import shutil as _sh
+        du = _sh.disk_usage(str(config.WORK_PATH))
+        disk_pct = int(du.used / du.total * 100)
+    except Exception:
+        pass
+
+    body = (
+        uikit.heading("❇️ Health", level=3)
+        + uikit.kv([
+            ("🟢 Status", uikit.code("healthy" if not kd["disk_pressure"] and kd["mem_action"] != "hard" else "degraded")),
+            ("⏱️ Uptime", uikit.code(uptime)),
+            ("🧠 Memory", uikit.code(f"{uikit.bar(mem_pct, 12)} {kd['mem_rss_mb']} MB")),
+            ("💽 Disk free", uikit.code(f"{kd['disk_free_mb']} MB" if kd["disk_free_mb"] else "?")),
+            ("💓 Heartbeat", uikit.code(f"{kd['heartbeat_age_s']}s ago" if kd["heartbeat_age_s"] is not None else "n/a")),
+        ])
+        + uikit.details("🐕 Watchdog", uikit.kv([
+            ("Checks", uikit.code(kd["checks"])),
+            ("Task idle", uikit.code(f"{kd['task_idle_s']}s")),
+            ("Stall cancels", uikit.code(kd["stall_actions"])),
+            ("Restarts", uikit.code(kd["restarts"])),
+            ("Auto-restart", uikit.code("on" if config.WATCHDOG_AUTO_RESTART else "off")),
+        ]))
+        + uikit.details("💓 Keep-alive", uikit.kv([
+            ("Pings", uikit.code(f"{ka['total_pings']} ({ka['failed_pings']} failed)")),
+            ("Interval", uikit.code(f"{ka['interval']}s")),
+            ("Last OK", uikit.code(f"{ka['last_ok_ago_s']}s ago" if ka["last_ok_ago_s"] is not None else "pending")),
+        ]))
+        + uikit.details("📥 Leech", uikit.kv([
+            ("Task active", uikit.code("yes" if getattr(BOT.State, "task_going", False) else "no")),
+            ("Queue", uikit.code(Queue.size() if hasattr(Queue, "size") else 0)),
+        ]))
+        + uikit.footer("reliability")
+    )
+    panel = uikit.panel("Health", body, level=3, with_footer=False)
+    await uikit.reply(message, panel, client=client)
+
+
+# ─────────────────────────────────────────────
+#  /setrestart — schedule the daily hygiene restart
+# ─────────────────────────────────────────────
+@Client.on_message(filters.private & filters.command("setrestart") & admin)
+async def handle_setrestart(client: Client, message):
+    if message.from_user.id != OWNER_ID:
+        return await message.reply(
+            "<blockquote>❌ ᴏᴡɴᴇʀ ᴏɴʟʏ ᴄᴏᴍᴍᴀɴᴅ.</blockquote>", parse_mode=ParseMode.HTML
+        )
+
+    import reliability as _rel
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        current = await _rel._get_scheduled_restart()
+        current_str = f"{current[0]:02d}:{current[1]:02d}" if current else "off"
+        return await message.reply(
+            "<blockquote>⏰ <b>Usage:</b> <code>/setrestart HH:MM</code> (24h) or <code>/setrestart off</code>\n"
+            f"📅 <b>Current:</b> <code>{current_str}</code>\n\n"
+            "Bot restarts daily at that time to keep memory clean.</blockquote>",
+            parse_mode=ParseMode.HTML,
+        )
+
+    raw = args[1].strip()
+    try:
+        parsed = _rel.parse_restart_time(raw)
+    except ValueError as e:
+        return await message.reply(f"<blockquote>❌ {e}</blockquote>", parse_mode=ParseMode.HTML)
+
+    await _rel.set_scheduled_restart(raw if parsed else None)
+    if parsed:
+        await message.reply(
+            f"<blockquote>✅ <b>Daily auto-restart scheduled at</b> <code>{parsed[0]:02d}:{parsed[1]:02d}</code>. "
+            "The watchdog will handle it.</blockquote>",
+            parse_mode=ParseMode.HTML,
+        )
+    else:
+        await message.reply(
+            "<blockquote>✅ <b>Daily auto-restart disabled.</b></blockquote>",
+            parse_mode=ParseMode.HTML,
+        )

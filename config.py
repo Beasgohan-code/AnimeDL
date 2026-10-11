@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 # Version
 # ============================================================================
-VERSION = os.getenv("VERSION", "4.2.0")
+VERSION = os.getenv("VERSION", "4.3.0")
 BUILD_DATE = os.getenv("BUILD_DATE", "2026-10-11")
 BOT_REPO = os.getenv("BOT_REPO", "https://github.com/Beasgohan-code/AnimeDL")
 
@@ -96,6 +96,23 @@ PROGRESS_BAR = os.getenv(
 """,
 )
 
+# ============================================================================
+# Reliability: keep-alive & watchdog
+# ============================================================================
+# Self-ping loop that keeps PaaS dynos awake + optional external rendezvous URL
+KEEP_ALIVE_ENABLED = os.getenv("KEEP_ALIVE_ENABLED", "true").lower() in ("1", "true", "yes")
+KEEP_ALIVE_INTERVAL = int(os.getenv("KEEP_ALIVE_INTERVAL", "600"))      # seconds
+KEEP_ALIVE_URL = os.getenv("KEEP_ALIVE_URL", "").strip() or None        # external URL to ping
+
+# Watchdog (stall / memory / disk / connection / scheduled restart)
+WATCHDOG_ENABLED = os.getenv("WATCHDOG_ENABLED", "true").lower() in ("1", "true", "yes")
+WATCHDOG_INTERVAL = int(os.getenv("WATCHDOG_INTERVAL", "60"))            # seconds between checks
+WATCHDOG_STALL_MIN = int(os.getenv("WATCHDOG_STALL_MIN", "20"))          # min without progress → cancel
+WATCHDOG_MEM_SOFT_MB = int(os.getenv("WATCHDOG_MEM_SOFT_MB", "1536"))    # gc + cleanup
+WATCHDOG_MEM_HARD_MB = int(os.getenv("WATCHDOG_MEM_HARD_MB", "2560"))    # restart (if auto)
+WATCHDOG_MIN_FREE_MB = int(os.getenv("WATCHDOG_MIN_FREE_MB", "1024"))    # disk floor; below → refuse tasks
+WATCHDOG_AUTO_RESTART = os.getenv("WATCHDOG_AUTO_RESTART", "true").lower() in ("1", "true", "yes")
+
 # ─── Multi-source engine ───
 # GogoAnime domain rotates often — override when it moves
 GOGO_BASE = os.getenv("GOGO_BASE", "https://gogoanime.bid/")
@@ -137,6 +154,8 @@ for _p in [WORK_PATH, DOWNLOADS_PATH, TEMP_PATH, THUMBNAIL_PATH, SESSIONS_PATH, 
         _p.mkdir(parents=True, exist_ok=True)
     except OSError:
         pass
+
+HEARTBEAT_PATH = BASE_DIR / "heartbeat.json"
 
 # ─── Telegram limits & transfer behaviour ───
 MAX_FILE_SIZE = 2097152000          # 2 GB Telegram bot-API upload limit

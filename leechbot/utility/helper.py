@@ -704,6 +704,13 @@ async def status_bar(down_msg: str, speed: str, percentage: float, eta: str,
     System info (CPU / RAM / disk / network / uptime) is always
     appended below the progress bar.
     """
+    # progress signal for the stall watchdog
+    try:
+        import reliability
+        reliability.watchdog.touch()
+    except Exception:
+        pass
+
     elapsed = getTime((datetime.now() - BotTimes.start_time).total_seconds())
 
     text = uikit.progress_panel("", percentage, speed, eta, done, left, engine)

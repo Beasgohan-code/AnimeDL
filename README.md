@@ -40,6 +40,18 @@ pipeline with per-provider referers.
 - **Torrents & magnets** via libtorrent/aria2 with tracker auto-refresh
 - **Queue, per-task progress bars, cancel, speed caps**
 
+### 🛡️ Reliability: keep-alive + watchdog
+- **Keep-alive** — self-pings `/health` so PaaS dynos (Heroku/Render/Koyeb) never sleep; optional external rendezvous URL (`KEEP_ALIVE_URL`); ping stats surfaced in `/health`
+- **Watchdog** (every minute, each alert throttled 15 min):
+  - 🐌 **Stall detection** — cancels leech tasks with no progress for `WATCHDOG_STALL_MIN` minutes
+  - 🧠 **Memory guard** — gc + scratch cleanup on soft pressure; auto-restart on hard pressure
+  - 💽 **Disk guard** — cleans old download scratch, refuses new tasks under critical pressure
+  - 📡 **Connection guard** — alerts on Telegram disconnects, restarts if stuck offline
+  - ⏰ **Scheduled restart** — `/setrestart 03:30` for a daily hygiene restart (owner)
+  - 💓 **Heartbeat file** — JSON liveness marker (`heartbeat.json`) for external supervisors
+- **Process watchdog** — `run.sh` restarts on crashes with growing backoff, gives up after `MAX_RESTARTS`, resets after 10 stable minutes
+- ❇️ **`/health` command** — rich reliability dashboard: memory/disk bars, watchdog counters, keep-alive stats, leech state
+
 ### 🧩 One bot, one process
 Both cores share a single Telegram session. Command menus, callbacks and
 message routing are de-conflicted so `/start`, search, leech and settings all
@@ -144,6 +156,9 @@ Copy `.env.example` → `.env` and fill in:
 | `FORMAT` / `CAPTION` | ➖ | Filename & caption templates |
 | `ALLOWED_USERS` | ➖ | Extra leech users (default: owner only) |
 | `GOGO_BASE` | ➖ | GogoAnime domain override (rotates often) |
+| `KEEP_ALIVE_*` | ➖ | Self-ping keep-alive (interval, external URL, on/off) |
+| `WATCHDOG_*` | ➖ | Stall/memory/disk/connection watchdog thresholds |
+| `MAX_RESTARTS` | ➖ | Process-level crash restart limit (run.sh watchdog) |
 | `ANIMEDL_CONSUMET_URL` | ➖ | Self-hosted Consumet API → adds the source |
 | `ANIMEDL_ANIWATCH_URL` | ➖ | Self-hosted Aniwatch API → adds the source |
 | `DEFAULT_UPLOAD_MODE` | ➖ | `media` or `document` |
