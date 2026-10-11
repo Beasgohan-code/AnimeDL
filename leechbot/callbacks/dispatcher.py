@@ -109,6 +109,16 @@ async def handle_callback(client, callback_query):
         elif data in ("normal", "zip", "unzip", "undzip"):
             await _handle_upload_type(client, callback_query, data)
 
+        # --- YT-DLP quality picker (opened from unified settings) ---
+        elif data == "open_fmt":
+            import uikit as _uikit
+            from leechbot.utility.helper import format_panel_html
+            await _uikit.edit_where(
+                client, callback_query.message.chat.id,
+                callback_query.message.id, format_panel_html(),
+            )
+            await safe_answer(callback_query)
+
         # --- Settings navigation ---
         elif data == "settings_menu":
             await send_settings(client, callback_query.message, callback_query.message.id, False)

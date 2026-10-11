@@ -57,14 +57,10 @@ async def format_command(client, message):
         [InlineKeyboardButton("❰ Back", callback_data="back")],
     ])
 
-    current_fmt = getattr(BOT.Setting, "ytdl_format", "bestvideo+bestaudio/best")
-    await message.reply_text(
-        f"<b>🎬 YT-DLP Format Selection</b>\n\n"
-        f"<b>Current:</b> <code>{current_fmt}</code>\n\n"
-        f"Choose the quality for video downloads:\n\n"
-        f"💡 <b>Tip:</b> Lower quality = faster download &amp; smaller size",
-        reply_markup=keyboard,
-    )
+    from leechbot.utility.helper import format_panel_html
+    import uikit
+    await uikit.reply(message, format_panel_html(), client=client)
+
 
 # =============================================================================
 # /speed

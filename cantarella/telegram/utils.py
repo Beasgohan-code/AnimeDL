@@ -26,7 +26,7 @@ async def set_bot_commands(client: Client):
         BotCommand("glupload", "📸 Dᴏᴡɴʟᴏᴀᴅ ɪᴍᴀɢᴇ ɢᴀʟʟᴇʀɪᴇs"),
         BotCommand("formats", "🎞️ Lɪsᴛ ғᴏʀᴍᴀᴛs ғᴏʀ ᴀ URL"),
         BotCommand("preview", "👁️ Pʀᴇᴠɪᴇᴡ ᴀ ɢᴀʟʟᴇʀʏ (ᴅʀʏ ʀᴜɴ)"),
-        BotCommand("settings", "⚙️ Lᴇᴇᴄʜ sᴇᴛᴛɪɴɢs ᴍᴇɴᴜ"),
+        BotCommand("settings", "⚙️ Aʟʟ sᴇᴛᴛɪɴɢs — ᴀɴɪᴍᴇ + ʟᴇᴇᴄʜ"),
         BotCommand("setname", "✏️ Sᴇᴛ ᴄᴜsᴛᴏᴍ ғɪʟᴇɴᴀᴍᴇ"),
         BotCommand("autorename", "🏷️ Aᴜᴛᴏ-ʀᴇɴᴀᴍᴇ ᴛᴇᴍᴘʟᴀᴛᴇ"),
         BotCommand("alias", "🔀 Cʀᴇᴀᴛᴇ ᴄᴏᴍᴍᴀɴᴅ ᴀʟɪᴀs"),

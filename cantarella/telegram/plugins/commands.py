@@ -60,46 +60,9 @@ admin = filters.create(check_admin)
 @check_ban
 @check_fsub
 async def handle_settings(client: Client, message):
-    ongoing_enabled = await db.get_user_setting(0, "ongoing_enabled", False)
-    status_icon = "✅ ON" if ongoing_enabled else "❌ OFF"
-    toggle_label = "🔴 Turn OFF" if ongoing_enabled else "🟢 Turn ON"
-
-    caption = (
-        "<blockquote><b>⚙️ ʙᴏᴛ ꜱᴇᴛᴛɪɴɢꜱ</b>\n\n"
-        f"<b>📡 ᴏɴɢᴏɪɴɢ ᴀᴜᴛᴏ-ᴅᴏᴡɴʟᴏᴀᴅ:</b> {status_icon}\n\n"
-        "ᴡʜᴇɴ ᴏɴ, ᴛʜᴇ ʙᴏᴛ ᴀᴜᴛᴏᴍᴀᴛɪᴄᴀʟʟʏ ᴄʜᴇᴄᴋꜱ ғᴏʀ ɴᴇᴡ ᴀɴɪᴍᴇ ᴇᴘɪꜱᴏᴅᴇꜱ ᴀɴᴅ ᴅᴏᴡɴʟᴏᴀᴅꜱ ᴛʜᴇᴍ.\n"
-        "ᴡʜᴇɴ ᴏғғ, ᴏɴʟʏ ᴍᴀɴᴜᴀʟ ꜱᴇᴀʀᴄʜ & ᴅᴏᴡɴʟᴏᴀᴅ ᴡᴏʀᴋꜱ.</blockquote>"
-    )
-
-    mapping_batch_mode = await db.get_user_setting(0, "mapping_batch_mode", True)
-    mapping_status_icon = "📦 BATCH" if mapping_batch_mode else "📄 SINGLE"
-    mapping_toggle_label = "🔄 ᴍᴀᴘᴘɪɴɢ: ꜱɪɴɢʟᴇ" if mapping_batch_mode else "🔄 ᴍᴀᴘᴘɪɴɢ: ʙᴀᴛᴄʜ"
-
-    active_source = await db.get_user_setting(0, "active_source", "animetsu")
-    source_display = _source_name(active_source)
-    source_toggle_label = "🔄 ꜱᴡɪᴛᴄʜ ꜱᴏᴜʀᴄᴇ"
-
-    caption = (
-        "<blockquote><b>⚙️ ʙᴏᴛ ꜱᴇᴛᴛɪɴɢꜱ</b>\n\n"
-        f"<b>📡 ᴏɴɢᴏɪɴɢ ᴀᴜᴛᴏ-ᴅᴏᴡɴʟᴏᴀᴅ:</b> {status_icon}\n"
-        f"<b>🔗 ᴍᴀᴘᴘɪɴɢ ᴍᴏᴅᴇ:</b> {mapping_status_icon}\n"
-        f"<b>📡 ᴀᴄᴛɪᴠᴇ ꜱᴏᴜʀᴄᴇ:</b> {source_display}\n\n"
-        "ᴡʜᴇɴ ᴏɴ, ᴛʜᴇ ʙᴏᴛ ᴀᴜᴛᴏᴍᴀᴛɪᴄᴀʟʟʏ ᴄʜᴇᴄᴋꜱ ғᴏʀ ɴᴇᴡ ᴀɴɪᴍᴇ ᴇᴘɪꜱᴏᴅᴇꜱ ᴀɴᴅ ᴅᴏᴡɴʟᴏᴀᴅꜱ ᴛʜᴇᴍ.</blockquote>"
-    )
-
-    buttons = InlineKeyboardMarkup([
-        [InlineKeyboardButton(toggle_label, callback_data="toggle_ongoing")],
-        [InlineKeyboardButton(mapping_toggle_label, callback_data="toggle_mapping_mode")],
-        [InlineKeyboardButton(source_toggle_label, callback_data="toggle_active_source")],
-        [InlineKeyboardButton("ᴄʟᴏꜱᴇ •", callback_data="adl_close")]
-    ])
-    await client.send_photo(
-        message.chat.id,
-        photo=get_random_image(),
-        caption=caption,
-        reply_markup=buttons,
-        parse_mode=ParseMode.HTML
-    )
+    # Unified settings (merged repo): same menu as /settings
+    from leechbot.utility.helper import send_settings
+    await send_settings(client, message, message.id, True)
 
 @Client.on_message(filters.private & filters.command("autodel") & admin)
 @check_ban

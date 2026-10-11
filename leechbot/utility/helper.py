@@ -627,6 +627,24 @@ async def message_deleter(user_msg, bot_msg):
 async def send_settings(client, message, msg_id: int, is_command: bool):
     """Send or edit the interactive settings menu (rich panel + styled buttons)."""
     on_off = lambda v: ("✅ On" if v else "❌ Off")
+
+    # Anime-engine settings (merged from the Cantarella repo) — hidden
+    # defensively if the anime core/db is unavailable.
+    anime = None
+    try:
+        from cantarella.core.database import db as _adb
+        from anime_sources.base import SOURCE_NAMES as _SN
+        anime = {
+            "ongoing": await _adb.get_user_setting(0, "ongoing_enabled", False),
+            "mapping": await _adb.get_user_setting(0, "mapping_batch_mode", True),
+            "source": _SN.get(
+                await _adb.get_user_setting(0, "active_source", "animetsu"),
+                "animetsu",
+            ),
+        }
+    except Exception:
+        anime = None
+
     rows = [
         [uikit.btn(
             f"📤 Upload: {BOT.Setting.stream_upload}",
@@ -647,11 +665,36 @@ async def send_settings(client, message, msg_id: int, is_command: bool):
             uikit.btn(f"⏳ Auto-Del: {on_off(BOT.Setting.auto_delete)}", callback_data="autodelete", style="default"),
         ],
         [uikit.btn(f"📸 Auto-SS: {on_off(BOT.Setting.auto_screenshot)}", callback_data="screenshot", style="default")],
-        [
-            uikit.btn("❰ Back", callback_data="start_back", style="link"),
-            uikit.btn("🔒 Close", callback_data="close", style="danger"),
-        ],
     ]
+    if anime:
+        rows += [
+            [uikit.btn(
+                f"📡 Auto-DL: {'✅ On' if anime['ongoing'] else '❌ Off'}",
+                callback_data="toggle_ongoing", style="primary",
+            )],
+            [
+                uikit.btn(
+                    f"🔗 Mapping: {'📦 Batch' if anime['mapping'] else '📄 Single'}",
+                    callback_data="toggle_mapping_mode", style="default",
+                ),
+                uikit.btn(f"🌐 Source: {anime['source']}",
+                          callback_data="toggle_active_source", style="default"),
+            ],
+            [uikit.btn("🎬 YT-DLP Quality", callback_data="open_fmt", style="default")],
+        ]
+        rows += [
+            [
+                uikit.btn("❰ Back", callback_data="start_back", style="link"),
+                uikit.btn("🔒 Close", callback_data="close", style="danger"),
+            ],
+        ]
+    else:
+        rows += [
+            [
+                uikit.btn("❰ Back", callback_data="start_back", style="link"),
+                uikit.btn("🔒 Close", callback_data="close", style="danger"),
+            ],
+        ]
     body = (
         uikit.kv([
             ("📤 Upload mode", uikit.code(BOT.Setting.stream_upload)),
@@ -664,11 +707,15 @@ async def send_settings(client, message, msg_id: int, is_command: bool):
             ("📸 Photos", uikit.code(BOT.Setting.photo_mode)),
             ("⏳ Auto-delete", uikit.code(f"{BOT.Setting.auto_delete_delay}s" if BOT.Setting.auto_delete else "off")),
             ("📸 Auto-SS", uikit.code(on_off(BOT.Setting.auto_screenshot))),
-        ])
+        ] + ([
+            ("📡 Auto-download", uikit.code(on_off(anime["ongoing"]))),
+            ("🔗 Mapping", uikit.code("📦 batch" if anime["mapping"] else "📄 single")),
+            ("🌐 Source", uikit.code(anime["source"])),
+        ] if anime else []))
         + uikit.buttons(*rows)
         + uikit.footer()
     )
-    settings_panel = uikit.panel("⚙️ Leech Settings", body, level=3, with_footer=False)
+    settings_panel = uikit.panel("⚙️ Settings — anime + leech", body, level=3, with_footer=False)
 
     try:
         if is_command:
@@ -756,3 +803,35 @@ def status_keyboard():
             InlineKeyboardButton("❌ Cancel", callback_data="cancel")
         ]
     ])
+
+
+def format_panel_html() -> str:
+    """YT-DLP quality picker as a rich panel (buttons embedded in markup)."""
+    current = getattr(BOT.Setting, "ytdl_format", "bestvideo+bestaudio/best")
+    rows = [
+        [uikit.btn("🎬 Best Quality",
+                   callback_data="fmt-bestvideo+bestaudio/best", style="primary")],
+        [
+            uikit.btn("📺 1080p",
+                      callback_data="fmt-bestvideo[height<=1080]+bestaudio/best[height<=1080]"),
+            uikit.btn("📺 720p",
+                      callback_data="fmt-bestvideo[height<=720]+bestaudio/best[height<=720]"),
+        ],
+        [
+            uikit.btn("📱 480p",
+                      callback_data="fmt-bestvideo[height<=480]+bestaudio/best[height<=480]"),
+            uikit.btn("📱 360p",
+                      callback_data="fmt-bestvideo[height<=360]+bestaudio/best[height<=360]"),
+        ],
+        [uikit.btn("🎵 Audio Only", callback_data="fmt-bestaudio/best")],
+        [
+            uikit.btn("❰ Back", callback_data="settings_menu", style="link"),
+            uikit.btn("🔒 Close", callback_data="close", style="danger"),
+        ],
+    ]
+    body = (
+        uikit.kv([("📌 Current", uikit.code(current))])
+        + uikit.note("Quality used for yt-dlp anime downloads. Lower = faster & smaller.")
+        + uikit.buttons(*rows)
+    )
+    return uikit.panel("🎬 Video Quality", body, level=3, with_footer=False)
