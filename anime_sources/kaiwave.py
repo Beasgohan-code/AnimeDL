@@ -151,7 +151,8 @@ class KaiWaveSource(BaseProvider):
                 cls._CURL_SESSION = False
         return cls._CURL_SESSION or None
 
-    def _get(self, url: str, referer: str = None, ajax: bool = False):
+    def _get(self, url: str, referer: str = None, ajax: bool = False,
+             params: dict = None):
         """GET with Chrome TLS impersonation (Cloudflare-family sites)."""
         headers = {
             "User-Agent": DEFAULT_UA,
@@ -164,7 +165,8 @@ class KaiWaveSource(BaseProvider):
         session = self._curl()
         if session is not None:
             try:
-                resp = session.get(url, headers=headers, timeout=(6, 20), impersonate="chrome124")
+                resp = session.get(url, headers=headers, params=params,
+                                   timeout=(6, 20), impersonate="chrome124")
                 resp.raise_for_status()
                 if looks_like_challenge(resp.text[:4000]):
                     raise SourceError(f"Cloudflare challenge on {url.split('/')[2]}")
@@ -173,7 +175,7 @@ class KaiWaveSource(BaseProvider):
                 raise  # real block → let _fetch walk to the next mirror
             except Exception:
                 pass  # curl-level failure (DNS/TLS) → plain requests
-        resp = http_session().get(url, headers=headers, timeout=(6, 20))
+        resp = http_session().get(url, headers=headers, params=params, timeout=(6, 20))
         if resp.status_code != 200:
             raise SourceError(f"AniWave: HTTP {resp.status_code}")
         if looks_like_challenge(resp.text[:4000]):

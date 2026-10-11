@@ -79,7 +79,7 @@ class AnimeGGSource(BaseProvider):
     id = "animegg"
     name = "AnimeGG"
 
-    def _get(self, url: str, referer: str = None):
+    def _get(self, url: str, referer: str = None, params: dict = None):
         """Chrome-TLS GET; on a block, retry the same path on the alternate
         base (www ↔ bare). Plain datacenter requests were 403ing → 0 results."""
         last = None
@@ -90,6 +90,7 @@ class AnimeGGSource(BaseProvider):
                 return tls_get(
                     target,
                     headers={"User-Agent": DEFAULT_UA, "Referer": referer or f"{_BASES[0]}/"},
+                    params=params,
                     timeout=(6, 20),
                 )
             except SourceError as e:

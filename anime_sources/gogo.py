@@ -61,11 +61,8 @@ class GogoSource(BaseProvider):
         return tls_get(url, headers={"User-Agent": DEFAULT_UA}, timeout=(6, 15), **kw)
 
     # ---------------------------------------------------------------- search
-    def search(self, query: str) -> list:
-        resp = self._fetch("/search.html", params={"keyword": query})
-        body = resp.text
-        if "Just a moment" in body or "cf-browser-verification" in body:
-            raise SourceError("Gogo: search is behind a Cloudflare challenge right now")
+    def _parse_search(self, body: str) -> list:
+        """Primary markup (`<p class="name">` rows)."""
         results = []
         for m in re.finditer(
             r'<p class="name">\s*<a href="(/category/[^"]+)"[^>]*>([^<]+)</a>', body
@@ -74,6 +71,42 @@ class GogoSource(BaseProvider):
             results.append(SearchResult(id=slug, title=m.group(2).strip(), provider=self.id))
             if len(results) >= 10:
                 break
+        return results
+
+    def _harvest_category_links(self, body: str) -> list:
+        """Markup-drift fallback: any /category/ anchor on the page
+        (relevance is filtered downstream by recovery scoring / user choice)."""
+        results, seen = [], set()
+        for m in re.finditer(
+                r'href="(?:https?://[^/]+)?/category/([a-z0-9-]+)/?"'
+                r'[^>]*>([^<]{2,80})<', body, re.I):
+            slug, title = m.group(1), re.sub(r"<[^>]+>", "", m.group(2)).strip()
+            if slug in seen or slug == "anime":
+                continue
+            seen.add(slug)
+            results.append(SearchResult(id=slug, title=title or slug.replace("-", " "),
+                                        provider=self.id))
+            if len(results) >= 10:
+                break
+        return results
+
+    def search(self, query: str) -> list:
+        results = []
+        challenge = False
+        for path, params in (("/search.html", {"keyword": query}),
+                             ("/filter.html", {"keyword": query, "page": 1})):
+            try:
+                body = self._fetch(path, params=params).text
+            except (SourceError, requests.RequestException):
+                continue
+            if "Just a moment" in body or "cf-browser-verification" in body:
+                challenge = True
+                continue
+            results = self._parse_search(body) or self._harvest_category_links(body)
+            if results:
+                break
+        if challenge and not results:
+            raise SourceError("Gogo: search is behind a Cloudflare challenge right now")
         return results
 
     # -------------------------------------------------------------- episodes

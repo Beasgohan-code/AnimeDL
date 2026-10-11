@@ -17,10 +17,24 @@ import shutil
 import subprocess
 import threading
 import time
+from functools import lru_cache
 from pathlib import Path
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+
+
+@lru_cache(maxsize=4)
+def _binary_version(binary: str) -> tuple:
+    """(major, minor) of a downloader binary, or () when undetectable.
+    Cached once per process — one --version spawn per binary."""
+    try:
+        out = subprocess.run([binary, "--version"], capture_output=True,
+                             text=True, timeout=15).stdout
+        m = re.search(r"(\d+)\.(\d+)", out)
+        return (int(m.group(1)), int(m.group(2))) if m else ()
+    except Exception:
+        return ()
 
 
 def _find_binary() -> str:
@@ -71,6 +85,8 @@ def download_stream(stream_url: str, headers: dict, task_dir: Path, save_name: s
         # Speed: the binary defaults to 2 download threads — raise to 16,
         # retry segments harder, skip interactive prompts (a prompt would
         # hang the pipeline), and pull audio/video/sub tracks concurrently.
+        # v0.6+ also knows --disable-update-check (a headless bot must not
+        # phone home before every download); older builds don't have it.
         cmd = [binary, stream_url,
                "--save-dir", str(task_dir),
                "--save-name", save_name,
@@ -80,6 +96,8 @@ def download_stream(stream_url: str, headers: dict, task_dir: Path, save_name: s
                "--auto-select",
                "-mt",
                "--no-log"]
+        if _binary_version(binary) >= (0, 6):
+            cmd.append("--disable-update-check")
     else:  # ffmpeg fallback
         cmd = [binary, "-y", *header_args, "-i", stream_url,
                "-c", "copy", str(task_dir / f"{save_name}.mkv")]

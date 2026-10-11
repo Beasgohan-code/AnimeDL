@@ -40,10 +40,13 @@ RUN pip install -r requirements.txt
 
 COPY . .
 
-# Bundle the N_m3u8DL-RE binary with exec permission and install the
-# unrar compatibility shim (bot code calls `unrar`, trixie only has
-# `unrar-free`)
+# Bundle the N_m3u8DL-RE binary with exec permission, upgrade it to the
+# newest tagged release when the build has network (bundled v0.5.1 stays as
+# fallback), and install the unrar compatibility shim (bot code calls
+# `unrar`, trixie only has `unrar-free`)
 RUN chmod +x binary/N_m3u8DL-RE 2>/dev/null || true && \
+    (python scripts/fetch_binary.py || echo "keeping bundled N_m3u8DL-RE") && \
+    chmod +x binary/N_m3u8DL-RE 2>/dev/null || true && \
     chmod +x docker/unrar-wrapper.sh && \
     ln -sf /app/docker/unrar-wrapper.sh /usr/local/bin/unrar
 

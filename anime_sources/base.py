@@ -231,23 +231,31 @@ def _tls_guard(resp, url: str):
     return resp
 
 
-def tls_get(url: str, headers: dict = None, params: dict = None,
-            timeout=(6, 20), impersonate: str = "chrome124"):
-    """GET with a Chrome TLS fingerprint; plain-session fallback.
+_IMPERSONATE_CHAIN = ("chrome124", "chrome131", "safari17_0")
 
-    Raises SourceError with the concrete reason (challenge / HTTP code) so
-    /sources can show WHY a source is dead instead of a bare 0.
+
+def tls_get(url: str, headers: dict = None, params: dict = None,
+            timeout=(6, 20), impersonate: str = None):
+    """GET with a Chrome TLS fingerprint; escalates fingerprints on
+    challenge/blocked answers (some CF configs reject specific chrome
+    builds by IP reputation) and falls back to the plain session when
+    curl itself can't run. Raises SourceError with the concrete reason.
     """
     mod = curl_session()
     if mod is not None:
-        try:
-            resp = mod.get(url, headers=headers, params=params,
-                           timeout=timeout, impersonate=impersonate)
-            return _tls_guard(resp, url)
-        except SourceError:
-            raise
-        except Exception:
-            pass  # curl-level failure (DNS, TLS) → plain-session attempt
+        targets = (impersonate,) if impersonate else _IMPERSONATE_CHAIN
+        for t in targets:
+            try:
+                resp = mod.get(url, headers=headers, params=params,
+                               timeout=timeout, impersonate=t)
+                return _tls_guard(resp, url)
+            except SourceError as e:
+                msg = str(e).lower()
+                if ("challenge" in msg or "blocked" in msg) and t is not targets[-1]:
+                    continue  # escalate to the next fingerprint
+                raise
+            except Exception:
+                break  # curl-level failure (DNS, TLS) → plain-session attempt
     resp = http_session().get(url, headers=headers, params=params, timeout=timeout)
     return _tls_guard(resp, url)
 
