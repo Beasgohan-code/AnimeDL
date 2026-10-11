@@ -310,6 +310,10 @@ def start_rss_poller():
 
 
 def stop_rss_poller():
-    """Signal the RSS poller to stop."""
-    global _STOP_EVENT
+    """Signal the RSS poller to stop and cancel its task so shutdown
+    does not leave a pending task behind."""
+    global _STOP_EVENT, _POLLTASK
     _STOP_EVENT = True
+    if _POLLTASK and not _POLLTASK.done():
+        _POLLTASK.cancel()
+    _POLLTASK = None

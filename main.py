@@ -198,13 +198,13 @@ async def run():
         dash_token = config.WEB_TOKEN or secrets.token_urlsafe(32)
         await start_web_server(port=dash_port, token=dash_token)
         logger.info("🌐 Dashboard: http://0.0.0.0:%d/dashboard", dash_port)
-        logger.info("🔑 Dashboard token: %s", dash_token)
+        logger.info("🔑 Dashboard token: %s…", dash_token[:8])
     except Exception as e:
         logger.warning("Web dashboard failed to start: %s", e)
 
     # Ongoing-episode auto-download scheduler (anime core)
     from cantarella.telegram.ongoing import ongoing_task
-    asyncio.create_task(ongoing_task(app))
+    bg_tasks = [asyncio.create_task(ongoing_task(app))]
 
     # Reliability layer: keep-alive pinger + watchdog
     import reliability
@@ -220,6 +220,15 @@ async def run():
         BOT.State.shutting_down = True
         from leechbot.utility.rss_manager import stop_rss_poller
         stop_rss_poller()
+        try:
+            from leechbot.web.server import stop_web_server
+            await stop_web_server()
+        except Exception:
+            pass
+        for _t in bg_tasks:
+            _t.cancel()
+        if bg_tasks:
+            await asyncio.gather(*bg_tasks, return_exceptions=True)
         import reliability
         await reliability.stop_all()
     except Exception:

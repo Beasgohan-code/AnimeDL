@@ -287,6 +287,10 @@ async def broadcast_update(data: dict = None):
     _ws_clients -= dead
 
 
+_broadcast_task = None
+_runner = None
+
+
 async def _auto_broadcast():
     """Background task that broadcasts state every 3 seconds."""
     while True:
@@ -355,16 +359,39 @@ async def start_web_server(port: int = 8080, token: str = ""):
         app.router.add_get("/dashboard", serve_dashboard)
         app.router.add_get("/", serve_dashboard)
 
+    global _broadcast_task, _runner
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
+    _runner = runner
 
-    # Start auto-broadcast background task
-    asyncio.create_task(_auto_broadcast())
+    # Start auto-broadcast background task (kept so shutdown can cancel it)
+    _broadcast_task = asyncio.create_task(_auto_broadcast())
 
     logger.info("🌐 Web dashboard running on http://0.0.0.0:%d", port)
     logger.info("📊 Dashboard URL: http://0.0.0.0:%d/dashboard", port)
     logger.info("🔑 Auth token: %s****", token[:4] if token else "NONE")
 
     return port
+
+
+async def stop_web_server():
+    """Cancel the auto-broadcast task and release the site — avoids
+    'Task was destroyed but it is pending!' noise at shutdown."""
+    global _broadcast_task, _runner
+    if _broadcast_task and not _broadcast_task.done():
+        _broadcast_task.cancel()
+        try:
+            await _broadcast_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+    _broadcast_task = None
+    if _runner:
+        try:
+            await _runner.cleanup()
+        except Exception:
+            pass
+        _runner = None

@@ -25,9 +25,11 @@
 # """
 
 import asyncio
+import html as _html
 import io
 import logging
 import re
+import sys as _sys
 import time
 import traceback
 from datetime import datetime, timezone
@@ -237,7 +239,6 @@ class TelegramLogHandler(logging.Handler):
 
     def format(self, record, repeats: int = 0):
         """Format a log record as (rich error report, full_traceback_or_None)."""
-        import html as _html
 
         level_emoji = {
             logging.ERROR: "🔴",
@@ -298,11 +299,22 @@ class AsyncExceptionHandler:
         self.dump_id = dump_id
 
     def handle(self, loop, context):
-        """Handle unhandled asyncio exceptions."""
-        import html as _html
+        """Handle unhandled asyncio exceptions.
 
+        Shutdown-safe: during loop close / interpreter finalization we must
+        not import modules (sys.meta_path is already None) or create tasks
+        (coroutines would never be awaited) — stderr only in that case.
+        """
         exception = context.get("exception")
         message = context.get("message", "Unhandled exception in asyncio task")
+
+        try:
+            loop_closed = loop.is_closed()
+        except Exception:
+            loop_closed = True
+        if loop_closed or _sys.is_finalizing():
+            print(f"[Asyncio Error] {context}", flush=True)
+            return
 
         rows = [
             ("🕒 When", uikit.code(_utc_now_str())),
