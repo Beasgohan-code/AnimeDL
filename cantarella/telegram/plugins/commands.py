@@ -7,6 +7,7 @@ import logging
 from datetime import datetime
 
 from cantarella.core.database import db
+from cantarella.core.state import user_watch_next
 from cantarella.core.images import get_random_image
 from cantarella.core.utils import decode_data, encode_data
 from config import OWNER_ID, START_PIC
@@ -408,3 +409,157 @@ async def handle_setrestart(client: Client, message):
             "<blockquote>✅ <b>Daily auto-restart disabled.</b></blockquote>",
             parse_mode=ParseMode.HTML,
         )
+
+
+# ─────────────────────────────────────────────
+#  /anime — AniList info card (poster, score, genres)
+# ─────────────────────────────────────────────
+@Client.on_message(filters.private & filters.command("anime"))
+async def handle_anime_info(client: Client, message):
+    from cantarella.core.state import user_ani_search
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        return await message.reply(
+            "<blockquote>📺 <b>Usage:</b> <code>/anime solo leveling</code>\n"
+            "Get info about any anime, then tap to download.</blockquote>",
+            parse_mode=ParseMode.HTML,
+        )
+    name = parts[1].strip()
+
+    sts = await message.reply(
+        "<blockquote>🔍 ꜰᴇᴛᴄʜɪɴɢ ᴀɴɪʟɪsᴛ ɪɴғᴏ...</blockquote>", parse_mode=ParseMode.HTML
+    )
+    try:
+        from cantarella.core.anilist import TextEditor
+        import asyncio as _asyncio
+        ani = TextEditor(name)
+        await ani.load_anilist()
+        adata = ani.adata or {}
+    except Exception as e:
+        logger.error(f"anime info error: {e}")
+        adata = {}
+
+    if not adata:
+        return await sts.edit_text(
+            "<blockquote>❌ ɴᴏ ᴀɴɪᴍᴇ ғᴏᴜɴᴅ ꜰᴏʀ ᴛʜᴀᴛ ɴᴀᴍᴇ.</blockquote>",
+            parse_mode=ParseMode.HTML,
+        )
+
+    title = (adata.get("title") or {}).get("romaji") or (adata.get("title") or {}).get("english") or name
+    score = adata.get("averageScore")
+    episodes = adata.get("episodes") or "?"
+    status = str(adata.get("status") or "").replace("_", " ").title()
+    import re as _re
+    description = _re.sub(r"<[^>]+>", "", adata.get("description") or "").strip()
+    if len(description) > 400:
+        description = description[:400] + "…"
+    genres = ", ".join((adata.get("genres") or [])[:5]) or "N/A"
+    season = adata.get("season")
+    season_year = adata.get("seasonYear")
+    season_str = f"{str(season).title()} {season_year}" if season or season_year else "N/A"
+
+    caption = (
+        f"<blockquote><b>◆ {title} ◆</b></blockquote>\n"
+        f"<blockquote><b>⭐ ꜱᴄᴏʀᴇ:</b> <code>{score}/100</code>\n"
+        f"📼 <b>ᴇᴘɪꜱᴏᴅᴇꜱ:</b> <code>{episodes}</code>\n"
+        f"📡 <b>ꜱᴛᴀᴛᴜꜱ:</b> <code>{status}</code>\n"
+        f"🗓 <b>ꜱᴇᴀꜱᴏɴ:</b> <code>{season_str}</code>\n"
+        f"🎭 <b>ɢᴇɴʀᴇꜱ:</b> <code>{genres}</code></blockquote>\n"
+    )
+    if description:
+        caption += f"<blockquote><i>{description}</i></blockquote>\n"
+    caption += "<blockquote><i>ᴛᴀᴘ ʙᴇʟᴏᴡ ᴛᴏ ꜱᴇᴀʀᴄʜ ᴅᴏᴡɴʟᴏᴀᴅ ʟɪɴᴋꜱ</i></blockquote>"
+
+    user_ani_search[message.from_user.id] = name
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔍 ꜱᴇᴀʀᴄʜ & ᴅᴏᴡɴʟᴏᴀᴅ", callback_data="aisearch")],
+        [InlineKeyboardButton("❌ ᴄʟᴏꜱᴇ", callback_data="adl_close")],
+    ])
+    poster = None
+    try:
+        poster = await ani.get_poster()
+    except Exception:
+        pass
+    try:
+        await sts.delete()
+        if poster:
+            await message.reply_photo(poster, caption=caption, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        else:
+            await message.reply_text(caption, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    except Exception:
+        await message.reply_text(caption, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+
+
+# ─────────────────────────────────────────────
+#  /nextep — next-episode countdown (ani-cli port)
+# ─────────────────────────────────────────────
+@Client.on_message(filters.private & filters.command("nextep"))
+async def handle_nextep(client: Client, message):
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        return await message.reply(
+            "<blockquote>⏰ <b>Usage:</b> <code>/nextep one piece</code>\n"
+            "Shows when the next episode airs.</blockquote>",
+            parse_mode=ParseMode.HTML,
+        )
+    query = parts[1].strip()
+
+    sts = await uikit.reply(message, uikit.note("⏰ Checking the airing schedule…"), client=client)
+    import asyncio as _asyncio
+    from cantarella.core import airschedule
+    try:
+        entries = await _asyncio.to_thread(airschedule.lookup, query)
+    except Exception as e:
+        return await uikit.edit(sts, uikit.error_panel("Schedule lookup failed", e), client=client)
+
+    if not entries:
+        return await uikit.edit(sts, uikit.panel(
+            "⏰ Airing Schedule", uikit.note("No matches found for that title."), level=3))
+
+    body = ""
+    for it in entries:
+        rows = [
+            ("🇯🇵 Title", uikit.code(it["jpn"])),
+            ("📡 Status", uikit.code(it["status"])),
+        ]
+        if it.get("next_sub_ep"):
+            rows.append(("🎧 Next Sub", uikit.code(f"EP {it['next_sub_ep']} in {it.get('sub_countdown') or '?'}")))
+        if it.get("next_dub_ep"):
+            rows.append(("🔊 Next Dub", uikit.code(f"EP {it['next_dub_ep']} in {it.get('dub_countdown') or '?'}")))
+        if not it.get("next_sub_ep") and not it.get("next_dub_ep"):
+            rows.append(("ℹ️", uikit.code("no scheduled episodes")))
+        body += uikit.heading(f"📺 {it['title']}", level=4) + uikit.kv(rows)
+    panel = uikit.panel("⏰ Next Episode", body, level=3)
+    await uikit.edit(sts, panel, client=client)
+
+
+# ─────────────────────────────────────────────
+#  /history — continue watching
+# ─────────────────────────────────────────────
+@Client.on_message(filters.private & filters.command("history"))
+async def handle_history(client: Client, message):
+    user_id = message.from_user.id
+    items = await db.get_history(user_id)
+    if not items:
+        return await message.reply(
+            "<blockquote>📭 <b>No watch history yet.</b>\n"
+            "Download an episode and it will show up here with a one-tap \"next episode\" button.</blockquote>",
+            parse_mode=ParseMode.HTML,
+        )
+
+    user_watch_next[user_id] = [it.get("next") or "" for it in items]
+    rows = []
+    for i, it in enumerate(items):
+        label = it.get("title") or "Anime"
+        ep = it.get("ep") or "?"
+        rows.append([InlineKeyboardButton(
+            f"⏭ {label[:28]} — EP {ep} ➜ {int(ep) + 1 if ep.isdigit() else 'next'}",
+            callback_data=f"wnext_{i}",
+        )])
+    rows.append([InlineKeyboardButton("🗑 ᴄʟᴇᴀʀ ʜɪꜱᴛᴏʀʏ", callback_data="wclear")])
+
+    await message.reply(
+        "<blockquote>🕘 <b>Continue watching</b>\nᴛᴀᴘ ᴀɴ ᴇɴᴛʀʏ ᴛᴏ ᴅᴏᴡɴʟᴏᴀᴅ ᴛʜᴇ ɴᴇxᴛ ᴇᴘɪꜱᴏᴅᴇ:</blockquote>",
+        reply_markup=InlineKeyboardMarkup(rows),
+        parse_mode=ParseMode.HTML,
+    )

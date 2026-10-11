@@ -13,6 +13,7 @@
 # ============================================================================
 
 import logging
+import re
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -143,6 +144,35 @@ def is_provider_url(url: str) -> bool:
         or "gogoanime" in u
         or "animepahe" in u
     )
+
+
+def next_episode_url(url: str):
+    """Best-effort URL of the NEXT episode for continue-watching.
+
+    Works for episode-numbered URL schemes (hianime, allanime, gogo).
+    Returns None for session-based schemes (animepahe) or unparseable URLs.
+    """
+    if not url:
+        return None
+    m = re.match(r"allanime://([^/]+)/([0-9.]+)$", url)
+    if m:
+        try:
+            return f"allanime://{m.group(1)}/{int(float(m.group(2))) + 1}"
+        except ValueError:
+            return None
+    m = re.search(r"([?&]ep=)([0-9.]+)$", url)
+    if m:
+        try:
+            return url[:m.start(2)] + str(int(float(m.group(2))) + 1)
+        except ValueError:
+            return None
+    m = re.search(r"-episode-([0-9.]+)$", url)
+    if m:
+        try:
+            return url[:m.start(1)] + str(int(float(m.group(1))) + 1)
+        except ValueError:
+            return None
+    return None
 
 
 def provider_id_for_url(url: str) -> str:

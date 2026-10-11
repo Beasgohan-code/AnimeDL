@@ -5,7 +5,7 @@ from pyrogram.enums import ParseMode, ChatType
 from pyrogram.types import InlineKeyboardMarkup
 from cantarella.button import Button as InlineKeyboardButton
 
-from cantarella.core.state import user_episodes, user_search_results, user_range_data
+from cantarella.core.state import user_episodes, user_search_results, user_range_data, user_watch_next, user_ani_search
 from cantarella.core.database import db
 from cantarella.core.images import get_random_image
 from config import *
@@ -459,6 +459,7 @@ async def on_episode_select(client: Client, callback_query):
         ],
         [InlineKeyboardButton("ᴀᴜᴛᴏ (ʙᴇꜱᴛ)",    callback_data=f"dl_auto_{ep_idx}")],
         [InlineKeyboardButton("ᴀʟʟ ǫᴜᴀʟɪᴛɪᴇꜱ", callback_data=f"dl_all_{ep_idx}")],
+        [InlineKeyboardButton("🔗 ꜱᴛʀᴇᴀᴍ ʟɪɴᴋ", callback_data=f"sl_{ep_idx}")],
         [
             InlineKeyboardButton("🔙 ʙᴀᴄᴋ", callback_data=f"eps_page_{page}"),
             InlineKeyboardButton("❌ ᴄʟᴏꜱᴇ", callback_data="adl_cancel")
@@ -476,3 +477,170 @@ async def on_episode_select(client: Client, callback_query):
             reply_markup=InlineKeyboardMarkup(buttons),
             parse_mode=ParseMode.HTML
         )
+
+
+# ─────────────────────────────────────────────
+#  Stream-link mode — resolve + share direct m3u8 (no download)
+# ─────────────────────────────────────────────
+@Client.on_callback_query(filters.regex("^sl_"))
+async def on_stream_link(client: Client, callback_query):
+    if not await check_fsub(client, callback_query.from_user.id):
+        await callback_query.answer("🔒 ᴘʟᴇᴀꜱᴇ ᴊᴏɪɴ ᴛʜᴇ ᴄʜᴀɴɴᴇʟ ꜰɪʀꜱᴛ!", show_alert=True)
+        return await send_fsub_prompt(client, callback_query.message)
+
+    ep_idx = int(callback_query.data.split("_")[1])
+    user_id = callback_query.from_user.id
+    if user_id not in user_episodes:
+        return await callback_query.answer("❌ ꜱᴇꜱꜱɪᴏɴ ᴇxᴘɪʀᴇᴅ.")
+
+    ep_data = user_episodes[user_id]["episodes"][ep_idx]
+    ep_url = ep_data.get("url", "")
+
+    from anime_sources import is_provider_url, get_provider, provider_id_for_url
+    if not is_provider_url(ep_url):
+        return await callback_query.answer(
+            "🔗 Stream links are available for Hianime / AllAnime / Gogo / AnimePahe sources.",
+            show_alert=True,
+        )
+
+    await callback_query.answer("🔗 Resolving stream…")
+    try:
+        await callback_query.edit_message_caption(
+            caption="<blockquote>🔗 <b>ʀᴇꜱᴏʟᴠɪɴɢ ꜱᴛʀᴇᴀᴍ...</b></blockquote>",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception:
+        pass
+
+    provider = get_provider(provider_id_for_url(ep_url))
+    try:
+        resolved = await client.loop.run_in_executor(None, provider.resolve, ep_url)
+    except Exception as e:
+        return await callback_query.message.reply(
+            f"<blockquote>❌ <b>ꜱᴛʀᴇᴀᴍ ʀᴇꜱᴏʟᴜᴛɪᴏɴ ғᴀɪʟᴇᴅ:</b> {e}</blockquote>",
+            parse_mode=ParseMode.HTML,
+        )
+
+    if not resolved.streams:
+        return await callback_query.message.reply(
+            "<blockquote>❌ ɴᴏ ꜱᴛʀᴇᴀᴍꜱ ғᴏᴜɴᴅ.</blockquote>", parse_mode=ParseMode.HTML
+        )
+
+    best = resolved.streams[0]
+    quality = best.get("quality", "auto")
+    link = best.get("url", "")
+    subs = len(resolved.subtitles or [])
+    audio = "dub" if getattr(provider, "id", "") == "hianime" and "dub" in ep_url else "sub/dub"
+
+    text = (
+        f"<blockquote>🔗 <b>{resolved.title} — EP {resolved.ep_num}</b></blockquote>\n"
+        f"<blockquote>📶 <b>Quality:</b> <code>{quality}p</code>\n"
+        f"🌐 <b>Source:</b> <code>{provider.name}</code>\n"
+        f"🗣 <b>Audio:</b> <code>{audio}</code>"
+        + (f"\n💬 <b>Subtitles:</b> <code>{subs} track(s)</code>" if subs else "")
+        + "</blockquote>\n"
+        f"<a href=\"{link}\">▶️ Open stream (m3u8)</a>\n"
+        "<blockquote><i>Tip: paste this link into VLC / MX Player / TPlayer to watch instantly — no download needed.</i></blockquote>"
+    )
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬇️ ᴅᴏᴡɴʟᴏᴀᴅ ɪɴsᴛᴇᴀᴅ", callback_data=f"ep_{ep_idx}"),
+         InlineKeyboardButton("❌ ᴄʟᴏꜱᴇ", callback_data="adl_cancel")],
+    ])
+    try:
+        await callback_query.edit_message_caption(caption=text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    except Exception:
+        await callback_query.message.reply(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+
+
+# ─────────────────────────────────────────────
+#  Continue watching — next episode / clear
+# ─────────────────────────────────────────────
+@Client.on_callback_query(filters.regex("^wnext_"))
+async def on_watch_next(client: Client, callback_query):
+    if not await check_fsub(client, callback_query.from_user.id):
+        await callback_query.answer("🔒 ᴘʟᴇᴀsᴇ ᴊᴏɪɴ ᴛʜᴇ ᴄʜᴀɴɴᴇʟ ꜰɪʀsᴛ!", show_alert=True)
+        return await send_fsub_prompt(client, callback_query.message)
+
+    user_id = callback_query.from_user.id
+    idx = int(callback_query.data.split("_")[1])
+    urls = user_watch_next.get(user_id) or []
+    if idx >= len(urls) or not urls[idx]:
+        return await callback_query.answer("❌ ɴᴇxᴛ-ᴇᴘɪsᴏᴅᴇ ʟɪɴᴋ ᴇxᴘɪʀᴇᴅ.", show_alert=True)
+
+    from cantarella.telegram.download import _handle_download
+    from config import TARGET_CHAT_ID
+
+    await callback_query.answer("⏭ Starting next episode…")
+    status_msg = await callback_query.message.reply(
+        "<blockquote>⏭ <b>ᴘʀᴇᴘᴀʀɪɴɢ ɴᴇxᴛ ᴇᴘɪsᴏᴅᴇ...</b></blockquote>",
+        parse_mode=ParseMode.HTML,
+    )
+    target_chat = int(TARGET_CHAT_ID) if TARGET_CHAT_ID else callback_query.message.chat.id
+    await _handle_download(
+        client, callback_query.message, urls[idx],
+        status_msg, quality="auto", chat_id=target_chat,
+    )
+
+
+@Client.on_callback_query(filters.regex("^wclear$"))
+async def on_watch_clear(client: Client, callback_query):
+    from cantarella.core.database import db
+    await db.clear_history(callback_query.from_user.id)
+    user_watch_next.pop(callback_query.from_user.id, None)
+    await callback_query.answer("🗑 History cleared", show_alert=True)
+    try:
+        await callback_query.message.delete()
+    except Exception:
+        pass
+
+
+# ─────────────────────────────────────────────
+#  /anime info card → search & download tap
+# ─────────────────────────────────────────────
+@Client.on_callback_query(filters.regex("^aisearch$"))
+async def on_ani_search(client: Client, callback_query):
+    user_id = callback_query.from_user.id
+    name = user_ani_search.get(user_id)
+    if not name:
+        return await callback_query.answer("❌ ꜱᴇᴀʀᴄʜ ᴇxᴘɪʀᴇᴅ — run /anime again.", show_alert=True)
+
+    await callback_query.answer("🔍 Searching…")
+    try:
+        await callback_query.edit_message_caption(
+            caption=f"<blockquote>🔍 <b>ꜱᴇᴀʀᴄʜɪɴɢ <i>{name}</i>...</b></blockquote>",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception:
+        pass
+
+    from cantarella.scraper.search import search_anime
+    from cantarella.core.database import db as _db
+    active_source = await _db.get_user_setting(0, "active_source", "animetsu")
+    results = await client.loop.run_in_executor(None, search_anime, name, active_source)
+
+    if not results:
+        return await callback_query.edit_message_caption(
+            caption="<blockquote>❌ ɴᴏ ʀᴇsᴜʟᴛꜱ ꜰᴏᴜɴᴅ ᴏɴ ᴛʜᴇ ᴀᴄᴛɪᴠᴇ sᴏᴜʀᴄᴇ.</blockquote>",
+            parse_mode=ParseMode.HTML,
+        )
+
+    user_search_results[user_id] = results
+    buttons = []
+    for res in results[:10]:
+        cb = f"anime_{res['id']}"[:64]
+        buttons.append([InlineKeyboardButton(f"{res['title']} ({res.get('type', 'TV')})", callback_data=cb)])
+    buttons.append([InlineKeyboardButton("❌ ᴄʟᴏsᴇ", callback_data="adl_cancel")])
+
+    try:
+        await callback_query.edit_message_caption(
+            caption="<blockquote>📺 <b>ꜱᴇᴀʀᴄʜ ʀᴇsᴜʟᴛꜱ:</b>\nꜱᴇʟᴇᴄᴛ ᴀɴ ᴀɴɪᴍᴇ:</blockquote>",
+            reply_markup=InlineKeyboardMarkup(buttons),
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception:
+        await callback_query.message.reply(
+            "<blockquote>📺 <b>ꜱᴇᴀʀᴄʜ ʀᴇsᴜʟᴛꜱ:</b>\nꜱᴇʟᴇᴄᴛ ᴀɴ ᴀɴɪᴍᴇ:</blockquote>",
+            reply_markup=InlineKeyboardMarkup(buttons),
+            parse_mode=ParseMode.HTML,
+        )
+

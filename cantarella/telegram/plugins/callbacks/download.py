@@ -197,3 +197,18 @@ async def on_download_quality(client: Client, callback_query):
             else:
                 quality_map[quality] = msg.id
         await post_to_main_channel(client, ep_url, uploaded_msgs, quality_map)
+
+    # ── Continue-watching: record for /history ──
+    try:
+        from anime_sources import next_episode_url as _next_url
+        from cantarella.core.database import db as _db
+        ep_num = str(ep_data.get("number") or (ep_idx + 1))
+        await _db.add_history(
+            callback_query.from_user.id,
+            title=user_episodes[user_id].get("title", ""),
+            episode_url=ep_url,
+            next_url=_next_url(ep_url) or "",
+            ep_num=ep_num,
+        )
+    except Exception:
+        pass

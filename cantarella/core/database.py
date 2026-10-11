@@ -27,6 +27,7 @@ class Database:
             self.settings                   = self.db["user_settings"]
             self.mapped_channels            = self.db["mapped_channels"]
             self.favorites                  = self.db["favorites"]
+            self.watch_history              = self.db["watch_history"]
 
             # Backward-compat aliases
             self.col    = self.user_data
@@ -37,6 +38,7 @@ class Database:
             self.client = self.db = None
             self.user_data = self.channel_data = self.admins_data = None
             self.del_timer_data = self.ban_data = self.fsub_data = None
+            self.watch_history = None
             self.rqst_fsub_data = self.rqst_fsub_Channel_data = None
             self.sequence_mode = self.processed = self.settings = None
             self.col = self.users = self.admins = None
@@ -358,6 +360,62 @@ class Database:
             return []
         data = await self.favorites.find_one({"user_id": user_id})
         return data.get("items", []) if data else []
+
+    # ══════════════════════════════════════════════════════
+    #  WATCH HISTORY (continue watching)
+    # ══════════════════════════════════════════════════════
+
+    async def add_history(self, user_id: int, title: str, episode_url: str,
+                          next_url: str = None, ep_num=None, provider: str = ""):
+        """Record a downloaded episode at the front of the user's history
+        (deduplicated, capped at 10 entries)."""
+        if self.watch_history is None:
+            return
+        try:
+            await self.watch_history.update_one(
+                {"user_id": int(user_id)},
+                {"$pull": {"items": {"url": episode_url}}},
+            )
+            await self.watch_history.update_one(
+                {"user_id": int(user_id)},
+                {"$push": {
+                    "items": {
+                        "$each": [{
+                            "title": title or "",
+                            "url": episode_url or "",
+                            "next": next_url or "",
+                            "ep": str(ep_num or ""),
+                            "provider": provider or "",
+                            "ts": datetime.utcnow(),
+                        }],
+                        "$position": 0,
+                        "$slice": 10,
+                    }
+                }},
+                upsert=True,
+            )
+        except Exception as e:
+            logging.error(f"add_history error: {e}")
+
+    async def get_history(self, user_id: int, limit: int = 8) -> list:
+        if self.watch_history is None:
+            return []
+        try:
+            data = await self.watch_history.find_one({"user_id": int(user_id)})
+            return (data.get("items", []) or [])[:limit]
+        except Exception as e:
+            logging.error(f"get_history error: {e}")
+            return []
+
+    async def clear_history(self, user_id: int):
+        if self.watch_history is None:
+            return
+        try:
+            await self.watch_history.update_one(
+                {"user_id": int(user_id)}, {"$set": {"items": []}}, upsert=True
+            )
+        except Exception as e:
+            logging.error(f"clear_history error: {e}")
 
     async def get_db_stats(self):
         """Fetch database storage statistics."""

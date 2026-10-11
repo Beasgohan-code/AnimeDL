@@ -24,6 +24,10 @@ their source; episode downloads flow through the same N_m3u8DL-RE + upload
 pipeline with per-provider referers.
 
 - **Search & download** — send an anime name or an episode URL, pick quality, get the file
+- **▶️ Stream-link mode** — resolve any episode to a direct m3u8 and watch in VLC/MX Player instantly, no download
+- **📺 `/anime` info cards** — AniList-powered poster + score + genres, with one-tap "search & download"
+- **⏰ `/nextep` countdown** — when does the next episode air? (sub + dub, animeschedule.net — ani-cli port)
+- **🕘 `/history` continue-watching** — one-tap "download next episode" from your watch history
 - **Multi-quality** — 360p / 720p / 1080p via `N_m3u8DL-RE` + ffmpeg
 - **Batch & season downloads** — grab a whole range of episodes in one tap
 - **Airing tracker** — auto-downloads new ongoing episodes on an IST schedule
@@ -77,6 +81,9 @@ Powered by [richgram](https://github.com/Badmunda05/richgram):
 | *(send anime name)* | Search anime |
 | *(send anime/episode URL)* | Open episode / series download |
 | `/ongoing` · `/schedule` | Today's airing schedule |
+| `/anime <name>` | AniList info card → search & download |
+| `/nextep <name>` | Next episode countdown (sub/dub) |
+| `/history` | Continue watching — one-tap next episode |
 | `/manage` | Anime bot settings (admin) |
 | `/autodel` | Auto-delete timer for posted files (admin) |
 | `t.me-link` · MediaFire · PixelDrain · Gofile · Terabox · Mega · … | Send any supported link → leech menu |

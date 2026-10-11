@@ -18,7 +18,7 @@ from pathlib import Path
 from anime_sources.base import (  # noqa: F401
     BaseProvider, Episode, ResolvedEpisode, SearchResult, SourceError,
     Stream, get_provider, is_provider_url, provider_id_for_url,
-    SOURCE_CYCLE, SOURCE_NAMES,
+    next_episode_url, SOURCE_CYCLE, SOURCE_NAMES,
 )
 from anime_sources.streamdl import download_stream  # noqa: F401
 
