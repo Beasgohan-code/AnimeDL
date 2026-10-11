@@ -92,21 +92,25 @@ class GogoSource(BaseProvider):
 
     def search(self, query: str) -> list:
         results = []
-        challenge = False
+        first_err = None
         for path, params in (("/search.html", {"keyword": query}),
                              ("/filter.html", {"keyword": query, "page": 1})):
             try:
                 body = self._fetch(path, params=params).text
-            except (SourceError, requests.RequestException):
+            except (SourceError, requests.RequestException) as e:
+                first_err = first_err or e
                 continue
             if "Just a moment" in body or "cf-browser-verification" in body:
-                challenge = True
+                first_err = first_err or SourceError(
+                    "Cloudflare challenge on " + self.bases[0].split("//")[1])
                 continue
             results = self._parse_search(body) or self._harvest_category_links(body)
             if results:
                 break
-        if challenge and not results:
-            raise SourceError("Gogo: search is behind a Cloudflare challenge right now")
+        if not results and first_err:
+            # every mirror errored → surface the REAL wall to /sources
+            raise first_err if isinstance(first_err, SourceError) \
+                else SourceError(f"Gogo: {first_err}")
         return results
 
     # -------------------------------------------------------------- episodes

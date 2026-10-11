@@ -34,6 +34,10 @@ _EPISODE_LINK_RE = re.compile(r"data-lang-key=[\"'](\d)[\"'][^>]*data-link-targe
 _H4_RE = re.compile(r"<h4>\s*([^<]+?)\s*</h4>", re.I)
 
 
+def _clean(s: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", s or "")).strip()
+
+
 class AniWorldSource(BaseProvider):
     id = "aniworld"
     name = "AniWorld"
@@ -66,17 +70,21 @@ class AniWorldSource(BaseProvider):
             if len(out) >= 10:
                 break
         if not out:
-            # markup drift: any /anime/<slug> series link
-            for a in soup.find_all("a", href=True):
-                m = re.match(r"^/anime/([a-z0-9-]+)/?$", a["href"].split("?")[0])
-                if m and m.group(1) not in ("stream",) and m.group(1) not in seen:
-                    seen.add(m.group(1))
-                    out.append(SearchResult(
-                        id=m.group(1),
-                        title=(a.get_text(strip=True) or m.group(1).replace("-", " ")),
-                        provider=self.id))
-                    if len(out) >= 10:
-                        break
+            # markup drift: harvest ANY series-ish link — /anime/<slug>,
+            # /anime/stream/<slug>, with or without trailing slash, any attr
+            for m in re.finditer(
+                    r'href="[^"]*?/anime/(?:stream/)?([a-z0-9][a-z0-9-]{2,})/?["\']'
+                    r'[^>]*>([^<]{2,80})', resp.text, re.I):
+                slug = m.group(1)
+                if slug in seen or slug in ("stream", "genre", "season", "anime"):
+                    continue
+                seen.add(slug)
+                out.append(SearchResult(
+                    id=slug,
+                    title=_clean(m.group(2)) or slug.replace("-", " "),
+                    provider=self.id))
+                if len(out) >= 10:
+                    break
         return out
 
     # -------------------------------------------------------------- episodes

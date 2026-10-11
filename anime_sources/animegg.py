@@ -104,7 +104,7 @@ class AnimeGGSource(BaseProvider):
         /series/<slug> links on the page (recovery's word-overlap scoring
         filters navigation junk downstream)."""
         out = []
-        for m in re.finditer(r'href=["\']/series/([a-z0-9-]+)/?["\'][^>]*>([^<]{2,80})', body, re.I):
+        for m in re.finditer(r'href=["\'][^"\']*?/series/([a-z0-9-]+)/?["\'][^>]*>([^<]{2,80})', body, re.I):
             slug = m.group(1)
             text = _strip_tags(m.group(2)) or slug.replace("-", " ")
             if slug not in {r["slug"] for r in out}:
@@ -114,7 +114,18 @@ class AnimeGGSource(BaseProvider):
         return out
 
     def _search_once(self, query: str) -> list:
-        body = self._get(f"{BASE}/search/", params={"q": query}).text
+        # both search route shapes (site has flip-flopped between them)
+        for path in ("/search/", "/search"):
+            try:
+                body = self._get(f"{BASE}{path}", params={"q": query}).text
+            except SourceError:
+                continue
+            results = self._mse_parse(body) or self._fallback_series_links(body)
+            if results:
+                return results
+        return []
+
+    def _mse_parse(self, body: str) -> list:
         results = []
         for m in _MSE_RE.finditer(body):
             inner = m.group(1)
@@ -132,8 +143,6 @@ class AnimeGGSource(BaseProvider):
             })
             if len(results) >= 10:
                 break
-        if not results:
-            results = self._fallback_series_links(body)
         return results
 
     def search(self, query: str) -> list:

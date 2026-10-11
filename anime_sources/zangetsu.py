@@ -25,7 +25,7 @@ from urllib.parse import quote_plus
 import requests
 
 from anime_sources.base import (
-    http_session,
+    http_session, tls_get,
     BaseProvider, Episode, ResolvedEpisode, SearchResult, SourceError,
     Stream, DEFAULT_UA,
 )
@@ -41,21 +41,24 @@ _session_cache = {"token": None, "cookie": None, "at": 0.0}
 _TTL = 1800  # 30 min
 
 
+def _fetch(url: str, headers: dict = None):
+    """Chrome-TLS fetch — zangetsu.cc is Cloudflare-fronted and 403s/challenges
+    plain datacenter python-requests (this exact gap kept it at 0 results)."""
+    return tls_get(url, headers=headers, timeout=(6, 20))
+
+
 def _bootstrap(force: bool = False):
     """GET /home to obtain the AJAX page token + session cookies."""
     import time as _t
     if not force and _session_cache["token"] and _t.time() - _session_cache["at"] < _TTL:
         return _session_cache
 
-    resp = http_session().get(
+    resp = _fetch(
         f"{BASE}/home",
         headers={"User-Agent": DEFAULT_UA,
                  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                  "Referer": f"{BASE}/home"},
-        timeout=(6, 15),
     )
-    if resp.status_code != 200:
-        raise SourceError(f"Zangetsu: bootstrap HTTP {resp.status_code}")
 
     m = _TOKEN_RE.search(resp.text)
     if not m:
@@ -77,7 +80,7 @@ class ZangetsuSource(BaseProvider):
     # ------------------------------------------------------------------ ajax
     def _ajax(self, path: str, referer: str = "/home") -> dict:
         sess = _bootstrap()
-        resp = http_session().get(
+        resp = _fetch(
             f"{BASE}{path}",
             headers={
                 "User-Agent": DEFAULT_UA,
@@ -87,12 +90,11 @@ class ZangetsuSource(BaseProvider):
                 "X-Page-Token": sess["token"],
                 **({"Cookie": sess["cookie"]} if sess["cookie"] else {}),
             },
-            timeout=(6, 15),
         )
-        if resp.status_code == 403 or resp.status_code == 401:
+        if resp.status_code in (401, 403):
             # token/cookie expired → re-bootstrap once
             sess = _bootstrap(force=True)
-            resp = http_session().get(
+            resp = _fetch(
                 f"{BASE}{path}",
                 headers={
                     "User-Agent": DEFAULT_UA,
@@ -102,7 +104,6 @@ class ZangetsuSource(BaseProvider):
                     "X-Page-Token": sess["token"],
                     **({"Cookie": sess["cookie"]} if sess["cookie"] else {}),
                 },
-                timeout=(6, 15),
             )
         if resp.status_code != 200:
             raise SourceError(f"Zangetsu: HTTP {resp.status_code}")
@@ -116,15 +117,10 @@ class ZangetsuSource(BaseProvider):
             self._bootstrap()
         except Exception:
             pass
-        page = http_session().get(
+        page = _fetch(
             f"{BASE}/search?keyword={quote_plus(query)}",
             headers={"User-Agent": DEFAULT_UA, "Referer": f"{BASE}/home"},
-            timeout=(6, 15),
-        )
-        if page.status_code != 200:
-            raise SourceError(f"Zangetsu: HTTP {page.status_code}")
-
-        page = page.text.split('id="main-sidebar"')[0]
+        ).text.split('id="main-sidebar"')[0]
         page = page.replace("\n", " ").split('<div class="film-detail">')
 
         results = []

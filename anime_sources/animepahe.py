@@ -81,13 +81,19 @@ class AnimePaheSource(BaseProvider):
     # ---------------------------------------------------------------- search
     def search(self, query: str) -> list:
         data = {}
+        first_err = None
         for api in API_MIRRORS:  # .com first; .si/.ru mirror the same API
             try:
                 data = self._get(api, params={"m": "search", "q": quote_plus(query)}).json()
-            except Exception:
+            except Exception as e:
+                first_err = first_err or e
                 continue
             if (data.get("data") or []):
                 break
+        if not (data.get("data") or []) and first_err is not None:
+            # every mirror failed → show the real blocker, not a bare 0
+            raise first_err if isinstance(first_err, SourceError) \
+                else SourceError(f"{first_err}")
         results = []
         for anime in data.get("data", []) or []:
             results.append(SearchResult(

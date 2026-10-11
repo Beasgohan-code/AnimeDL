@@ -255,7 +255,11 @@ def tls_get(url: str, headers: dict = None, params: dict = None,
                     continue  # escalate to the next fingerprint
                 raise
             except Exception:
-                break  # curl-level failure (DNS, TLS) → plain-session attempt
+                # unsupported fingerprint (older curl_cffi) or transport error
+                # → try the next fingerprint before the plain fallback
+                if t is not targets[-1]:
+                    continue
+                break
     resp = http_session().get(url, headers=headers, params=params, timeout=timeout)
     return _tls_guard(resp, url)
 
