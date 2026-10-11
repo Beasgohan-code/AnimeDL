@@ -20,6 +20,16 @@ try:
 except ImportError:  # pragma: no cover
     _c_requests = None
 
+_CURL_SESSION = None
+
+
+def _curl():
+    """Keep-alive impersonated session (one TLS handshake per host)."""
+    global _CURL_SESSION
+    if _CURL_SESSION is None and _c_requests is not None:
+        _CURL_SESSION = _c_requests.Session()
+    return _CURL_SESSION
+
 import requests
 
 from anime_sources.base import (
@@ -47,7 +57,7 @@ class AnimePaheSource(BaseProvider):
         )
         if _c_requests is not None:
             # impersonated Chrome TLS stack — avoids the fingerprint block
-            resp = _c_requests.get(url, impersonate="chrome", **kwargs)
+            resp = _curl().get(url, impersonate="chrome", **kwargs)
         else:
             resp = http_session().get(url, **kwargs)
         if resp.status_code != 200:

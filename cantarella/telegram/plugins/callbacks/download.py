@@ -1,12 +1,13 @@
 import re
 import asyncio
+import time
 from pyrogram import Client, filters
 from pyrogram.enums import ParseMode
 from pyrogram.types import InlineKeyboardMarkup
 from cantarella.button import Button as InlineKeyboardButton
 
 from cantarella.core.state import user_episodes
-from cantarella.telegram.download import _handle_download
+from cantarella.telegram.download import _handle_download, run_episode_batch
 from cantarella.telegram.pages import post_to_main_channel
 from cantarella.core.utils import chunk_list
 from config import *
@@ -103,6 +104,7 @@ async def on_start_batch_dl(client: Client, callback_query):
         f"<blockquote>🔄 <b>ʙᴀᴛᴄʜ ᴅᴏᴡɴʟᴏᴀᴅ ꜱᴛᴀʀᴛᴇᴅ</b>\nǫᴜᴀʟɪᴛɪᴇꜱ: {', '.join(selected_qualities)}\nᴇᴘɪꜱᴏᴅᴇꜱ: {len(episodes)}</blockquote>",
         parse_mode=ParseMode.HTML
     )
+    batch_t0 = time.time()
 
     chunk_size = 25
     for chunk_idx, ep_chunk in enumerate(chunk_list(episodes, chunk_size)):
@@ -117,29 +119,17 @@ async def on_start_batch_dl(client: Client, callback_query):
             first_msg_id = None
             last_msg_id  = None
 
-            for ep in ep_chunk:
-                ep_title = ep['title']
-                try:
-                    await status_msg.edit_text(
-                        f"<blockquote>🔄 <b>ᴅᴏᴡɴʟᴏᴀᴅɪɴɢ ᴄʜᴜɴᴋ {ep_range_str}</b>\nǫᴜᴀʟɪᴛʏ: {quality}ᴘ\nᴇᴘɪꜱᴏᴅᴇ: {ep_title}...</blockquote>",
-                        parse_mode=ParseMode.HTML
-                    )
-                except Exception:
-                    pass
-                # Pass status_msg so we reuse it and avoid sending new messages to LOG_CHANNEL every time
-                msgs, new_status_msg = await _handle_download(
-                    client, callback_query.message, ep['url'],
-                    status_msg, is_playlist=False, quality=quality, chat_id=target_chat
-                )
-                if new_status_msg:
-                    status_msg = new_status_msg
-                await asyncio.sleep(2) # Small delay to avoid flooding when looping
-                if msgs:
-                    all_chunk_msgs.extend(msgs)
-                    for msg in msgs:
-                        if first_msg_id is None:
-                            first_msg_id = msg.id
-                        last_msg_id = msg.id
+            results_list = await run_episode_batch(
+                client, callback_query.message, ep_chunk, quality, target_chat,
+                progress_msg=status_msg
+            )
+            ep_msgs = [m for ms in results_list for m in ms]
+            if ep_msgs:
+                all_chunk_msgs.extend(ep_msgs)
+                for msg in ep_msgs:
+                    if first_msg_id is None:
+                        first_msg_id = msg.id
+                    last_msg_id = msg.id
 
             if first_msg_id and last_msg_id:
                 q_label = f"{quality}p" if quality.isdigit() else "ᴀᴜᴛᴏ"
@@ -152,8 +142,9 @@ async def on_start_batch_dl(client: Client, callback_query):
             ep_url = ep_chunk[0]['url']
             await post_to_main_channel(client, ep_url, all_chunk_msgs, quality_map, batch_ep_range=ep_range_str)
 
+    _took = int(time.time() - batch_t0)
     await status_msg.edit_text(
-        "<blockquote>✅ <b>ʙᴀᴛᴄʜ ᴅᴏᴡɴʟᴏᴀᴅ ᴄᴏᴍᴘʟᴇᴛᴇ!</b></blockquote>",
+        f"<blockquote>✅ <b>ʙᴀᴛᴄʜ ᴅᴏᴡɴʟᴏᴀᴅ ᴄᴏᴍᴘʟᴇᴛᴇ!</b>\n⏱ ᴛᴏᴏᴋ: {_took//60}ᴍ {_took%60:02d}ꜱ</blockquote>",
         parse_mode=ParseMode.HTML
     )
 

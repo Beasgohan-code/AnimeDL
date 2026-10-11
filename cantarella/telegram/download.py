@@ -24,7 +24,7 @@ async def schedule_deletion(client: Client, chat_id: int, message_id: int, delay
 
 
 # Global semaphores to limit concurrent tasks and prevent resource conflicts
-download_semaphore = asyncio.Semaphore(1)
+download_semaphore = asyncio.Semaphore(3)  # small instance safe: true concurrency stays bounded
 upload_semaphore = asyncio.Semaphore(1)
 
 
@@ -34,6 +34,43 @@ def _make_progress_bar(percent: float, length: int = 10) -> str:
     empty = length - filled
     bar = "●" * filled + "○" * empty
     return f"[{bar}] {percent:.1f}%"
+
+
+async def run_episode_batch(client, message, episodes, quality, target_chat,
+                            progress_msg=None, concurrency=2):
+    """Download several episodes with bounded parallelism, preserving order.
+
+    Two episode pipelines stay hot so the upload of one episode overlaps the
+    download of the next; the global download_semaphore still caps true
+    concurrency, keeping small instances safe. Returns per-episode message
+    lists in INPUT order (gather preserves submission order).
+    """
+    sem = asyncio.Semaphore(concurrency)
+    done = [0]
+    total = len(episodes)
+
+    async def _one(ep):
+        async with sem:
+            try:
+                msgs, _new_status = await _handle_download(
+                    client, message, ep['url'], progress_msg,
+                    quality=quality, chat_id=target_chat
+                )
+            except Exception as e:
+                print(f"Batch episode failed ({ep.get('title', '?')}): {e}")
+                msgs = None
+            done[0] += 1
+            if progress_msg is not None:
+                try:
+                    await progress_msg.edit_text(
+                        f"<blockquote>📦 <b>{done[0]}/{total} ᴇᴘɪꜱᴏᴅᴇꜱ ᴅᴏɴᴇ</b> · {quality}ᴘ</blockquote>",
+                        parse_mode=ParseMode.HTML
+                    )
+                except Exception:
+                    pass
+            return msgs or []
+
+    return await asyncio.gather(*[_one(ep) for ep in episodes])
 
 
 async def _handle_download(client: Client, message, url, status_msg, is_playlist=False, quality="auto", chat_id=None, name_override=None, season_override=None, ep_num_override=None):
@@ -52,7 +89,7 @@ async def _handle_download(client: Client, message, url, status_msg, is_playlist
             from pyrogram.errors import FloodWait
             new_status_msg = await client.send_message(progress_chat_id, f"<blockquote>🔄 ꜱᴛᴀʀᴛɪɴɢ ᴘʀᴏᴄᴇꜱꜱ ғᴏʀ: {url}</blockquote>", parse_mode=ParseMode.HTML)
             status_msg = new_status_msg
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.3)
         except FloodWait as e:
             print(f"FloodWait on progress message: {e}. Suppressing.")
             progress_chat_id = None # Disable progress updates for this run if we hit floodwait

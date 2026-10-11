@@ -75,8 +75,29 @@ if __name__ == '__main__':
 _SEARCH_POOL = None  # shared, never joined — slow sources can't stall answers
 
 
+_RESULT_CACHE = {}         # (query, source) -> (ts, results, winner_key)
+_RESULT_CACHE_TTL = 90.0
+
+
 def search_anime_multi(query, source="animetsu", max_sources=5,
                        head_start=4.0, deadline=12.0):
+    """Memoized wrapper: identical searches within 90s answer instantly."""
+    import time as _t
+    key = (str(query).casefold().strip(), source)
+    hit = _RESULT_CACHE.get(key)
+    if hit and _t.time() - hit[0] < _RESULT_CACHE_TTL:
+        return list(hit[1]), [(hit[2], f"{len(hit[1])} found (cached)")]
+    results, tried = _search_anime_multi_impl(query, source, max_sources,
+                                              head_start, deadline)
+    if results:
+        if len(_RESULT_CACHE) > 128:
+            _RESULT_CACHE.pop(min(_RESULT_CACHE, key=lambda k: _RESULT_CACHE[k][0]), None)
+        _RESULT_CACHE[key] = (_t.time(), results, tried[-1][0] if tried else source)
+    return results, tried
+
+
+def _search_anime_multi_impl(query, source="animetsu", max_sources=5,
+                             head_start=4.0, deadline=12.0):
     """Search the active source first, then fall back through the engine —
     but RACE the sources in parallel instead of walking them one by one.
 

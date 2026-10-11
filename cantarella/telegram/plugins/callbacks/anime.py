@@ -1,5 +1,6 @@
 import asyncio
 import re
+import time
 from pyrogram import Client, filters
 from pyrogram.enums import ParseMode, ChatType
 from pyrogram.types import InlineKeyboardMarkup
@@ -51,12 +52,17 @@ async def on_anime_select(client: Client, callback_query):
         url = f"https://animetsu.live/anime/{anime_id}"
         from cantarella.scraper.animetsu import AnimetsuScraper
         downloader = AnimetsuScraper()
-        entries = await client.loop.run_in_executor(None, downloader.list_episodes, anime_id)
+        from anime_sources.base import cached_episodes
+        entries = await client.loop.run_in_executor(
+            None, lambda: cached_episodes(
+                f"list:animetsu:{anime_id}", downloader.list_episodes, anime_id))
     else:
         url = f"https://aniwatchtv.to/watch/{anime_id}"
         from cantarella.scraper.cantarellatv import cantarellatvDownloader
         downloader = cantarellatvDownloader()
-        entries = await client.loop.run_in_executor(None, downloader.list_episodes, url)
+        from anime_sources.base import cached_episodes
+        entries = await client.loop.run_in_executor(
+            None, lambda: cached_episodes(f"list:aniwatchtv:{url}", downloader.list_episodes, url))
 
     if not entries:
         await callback_query.answer("❌ ɴᴏ ᴇᴘɪꜱᴏᴅᴇꜱ ꜰᴏᴜɴᴅ.")
@@ -371,7 +377,7 @@ async def on_start_range_dl(client: Client, callback_query):
     try: await callback_query.message.delete()
     except: pass
 
-    from cantarella.telegram.download import _handle_download
+    from cantarella.telegram.download import _handle_download, run_episode_batch
     from cantarella.telegram.pages import post_to_main_channel
     from cantarella.core.utils import chunk_list
 
@@ -380,6 +386,7 @@ async def on_start_range_dl(client: Client, callback_query):
         f"<blockquote>🔢 <b>ʀᴀɴɢᴇ ᴅᴏᴡɴʟᴏᴀᴅ ꜱᴛᴀʀᴛᴇᴅ</b>\nǫᴜᴀʟɪᴛɪᴇꜱ: {', '.join(qualities)}\nʀᴀɴɢᴇ: {start}-{end}</blockquote>",
         parse_mode=ParseMode.HTML
     )
+    range_t0 = time.time()
 
     quality_priority = {"360": 1, "720": 2, "1080": 3, "auto": 4}
     qualities.sort(key=lambda q: quality_priority.get(q, 99))
@@ -393,18 +400,15 @@ async def on_start_range_dl(client: Client, callback_query):
         for q in qualities:
             first_id = None
             last_id = None
-            for ep in ep_chunk:
-                try:
-                    await status_msg.edit_text(f"<blockquote>🔄 ᴅᴏᴡɴʟᴏᴀᴅɪɴɢ {ep['title']} [{q}p]...</blockquote>", parse_mode=ParseMode.HTML)
-                except: pass
-
-                msgs, new_status = await _handle_download(client, None, ep['url'], status_msg, quality=q, chat_id=target_chat)
-                if new_status: status_msg = new_status
-                if msgs:
-                    all_chunk_msgs.extend(msgs)
-                    for m in msgs:
-                        if first_id is None: first_id = m.id
-                        last_id = m.id
+            results_list = await run_episode_batch(
+                client, None, ep_chunk, q, target_chat, progress_msg=status_msg
+            )
+            ep_msgs = [m for ms in results_list for m in ms]
+            if ep_msgs:
+                all_chunk_msgs.extend(ep_msgs)
+                for m in ep_msgs:
+                    if first_id is None: first_id = m.id
+                    last_id = m.id
 
             if first_id and last_id:
                 q_label = f"{q}p" if q.isdigit() else "ᴀᴜᴛᴏ"
@@ -413,7 +417,8 @@ async def on_start_range_dl(client: Client, callback_query):
         if all_chunk_msgs:
             await post_to_main_channel(client, ep_chunk[0]['url'], all_chunk_msgs, quality_map, batch_ep_range=ep_range_str)
 
-    await status_msg.edit_text("<blockquote>✅ <b>ʀᴀɴɢᴇ ᴅᴏᴡɴʟᴏᴀᴅ ᴄᴏᴍᴘʟᴇᴛᴇ!</b></blockquote>", parse_mode=ParseMode.HTML)
+    _took = int(time.time() - range_t0)
+    await status_msg.edit_text(f"<blockquote>✅ <b>ʀᴀɴɢᴇ ᴅᴏᴡɴʟᴏᴀᴅ ᴄᴏᴍᴘʟᴇᴛᴇ!</b>\n⏱ ᴛᴏᴏᴋ: {_took//60}ᴍ {_took%60:02d}ꜱ</blockquote>", parse_mode=ParseMode.HTML)
 
 @Client.on_callback_query(filters.regex("^favorites$"))
 async def on_favorites_cb(client: Client, callback_query):
@@ -674,4 +679,31 @@ async def on_ani_search(client: Client, callback_query):
             reply_markup=InlineKeyboardMarkup(buttons),
             parse_mode=ParseMode.HTML,
         )
+
+    # ── Speed: warm episode listings for the top results in the background,
+    # so tapping a result shows its episode list instantly ──
+    try:
+        def _warm_listings():
+            for res in results[:4]:
+                rid = str(res.get("id", ""))
+                try:
+                    if ":" in rid:
+                        from anime_sources import list_provider_episodes
+                        pid, paid = rid.split(":", 1)
+                        list_provider_episodes(pid, paid)
+                    elif active_source == "animetsu":
+                        from anime_sources.base import cached_episodes as _ce
+                        from cantarella.scraper.animetsu import AnimetsuScraper
+                        _ce(f"list:animetsu:{rid}", AnimetsuScraper().list_episodes, rid)
+                    else:
+                        from anime_sources.base import cached_episodes as _ce
+                        from cantarella.scraper.cantarellatv import cantarellatvDownloader
+                        _u = f"https://aniwatchtv.to/watch/{rid}"
+                        _ce(f"list:aniwatchtv:{_u}", cantarellatvDownloader().list_episodes, _u)
+                except Exception:
+                    pass
+
+        asyncio.get_running_loop().run_in_executor(None, _warm_listings)
+    except Exception:
+        pass
 
