@@ -22,14 +22,30 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 
 
 def _find_binary() -> str:
+    """Locate a usable downloader binary.
+
+    is_file() alone is NOT enough — a binary that lost its exec bit (zip
+    extraction, some Docker COPY paths) passes is_file() but every spawn
+    dies with PermissionError, which used to break ALL downloads. We now
+    verify executability, try to chmod the repo binary back to life, and
+    only then fall through to PATH (N_m3u8DL-RE → ffmpeg).
+    """
     candidates = [
         Path("binary") / "N_m3u8DL-RE",
         Path("binary") / "N_m3u8DL-RE.exe",
         Path("/usr/local/bin/N_m3u8DL-RE"),
     ]
     for p in candidates:
-        if p.is_file():
+        if not p.is_file():
+            continue
+        if os.access(p, os.X_OK):
             return str(p)
+        try:  # best-effort repair — deploy pipelines sometimes drop the bit
+            p.chmod(p.stat().st_mode | 0o111)
+            if os.access(p, os.X_OK):
+                return str(p)
+        except OSError:
+            pass
     found = shutil.which("N_m3u8DL-RE") or shutil.which("ffmpeg")
     if not found:
         raise FileNotFoundError("Neither N_m3u8DL-RE nor ffmpeg found")

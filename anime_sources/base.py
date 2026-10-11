@@ -119,6 +119,8 @@ def cached_episodes(cache_key: str, fetch, *args):
     if hit and now - hit[0] < _EP_CACHE_TTL:
         return list(hit[1])
     val = fetch(*args)
+    if not val:  # transient empty listing — don't pin it for the TTL
+        return val
     if len(_EP_CACHE) > 256:  # bounded memory: evict oldest entry
         _EP_CACHE.pop(min(_EP_CACHE, key=lambda k: _EP_CACHE[k][0]), None)
     _EP_CACHE[cache_key] = (now, val)
@@ -168,9 +170,9 @@ def http_session():
 def cached_streams(cache_key: str, fetch, *args):
     """Cache resolved stream URLs (10 min TTL).
 
-    Stream links stay valid for hours but we keep the window short on
-    purpose: the point is to make a quality pick that happens seconds
-    after the menu rendered ~instant, not to serve stale links.
+    Empty results are NEVER cached: a transient resolve failure would
+    otherwise be pinned for the whole TTL ("poison cache") and every
+    quality tap would fail instantly until it expired.
     """
     import time as _t
     hit = _STREAM_CACHE.get(cache_key)
@@ -178,6 +180,8 @@ def cached_streams(cache_key: str, fetch, *args):
     if hit and now - hit[0] < _STREAM_CACHE_TTL:
         return hit[1]
     val = fetch(*args)
+    if not val or (hasattr(val, "streams") and not val.streams):
+        return val  # transient empty — retry next tap, cache nothing
     if len(_STREAM_CACHE) > 256:  # keep memory bounded
         oldest = min(_STREAM_CACHE, key=lambda k: _STREAM_CACHE[k][0])
         _STREAM_CACHE.pop(oldest, None)
