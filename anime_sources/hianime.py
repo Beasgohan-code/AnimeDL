@@ -45,12 +45,20 @@ class HianimeSource(BaseProvider):
         return cls._CURL_SESSION
 
     def _get(self, url: str, headers: dict = None) -> str:
-        resp = self._curl().get(
-            url,
-            headers={"User-Agent": DEFAULT_UA, **(headers or {})},
-            impersonate=IMPERSONATE,
-            timeout=(6, 15),
-        )
+        # one transparent retry: a pooled keep-alive socket can be closed by
+        # the CDN while idle — the immediate re-issue lands on a fresh one
+        for attempt in (1, 2):
+            try:
+                resp = self._curl().get(
+                    url,
+                    headers={"User-Agent": DEFAULT_UA, **(headers or {})},
+                    impersonate=IMPERSONATE,
+                    timeout=(6, 15),
+                )
+                break
+            except Exception:
+                if attempt == 2:
+                    raise
         if resp.status_code != 200:
             raise SourceError(f"Hianime: HTTP {resp.status_code}")
         return resp.text

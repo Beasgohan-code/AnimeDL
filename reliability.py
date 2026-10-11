@@ -163,7 +163,9 @@ class KeepAlive:
         except Exception as e:
             self.failed += 1
             self.last_error = str(e)
-            logger.debug("keep-alive local ping failed: %s", e)
+            # warning-level so failures are visible in Render logs, but the
+            # loop keeps running — pings are 1/interval, so this can't flood
+            logger.warning("keep-alive local ping failed: %s", e)
         if self.external_url:
             try:
                 await self._ping(self.external_url)

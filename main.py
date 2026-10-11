@@ -77,15 +77,22 @@ async def handle_root(request):
 
 
 async def handle_health(request):
-    from leechbot.utility.variables import BOT, Queue
-
+    # Fully guarded: a probe (or the keep-alive pinger) must ALWAYS get a
+    # 200-series answer, never a handler-crash 500 that reads as downtime.
     payload = {
         "status": "ok",
         "version": config.VERSION,
-        "uptime_s": int((datetime.utcnow() - START_TIME).total_seconds()),
-        "leech_task_active": bool(getattr(BOT.State, "task_going", False)),
-        "queue_size": Queue.size() if hasattr(Queue, "size") else 0,
+        "uptime_s": 0,
+        "leech_task_active": False,
+        "queue_size": 0,
     }
+    try:
+        payload["uptime_s"] = int((datetime.utcnow() - START_TIME).total_seconds())
+        from leechbot.utility.variables import BOT, Queue
+        payload["leech_task_active"] = bool(getattr(BOT.State, "task_going", False))
+        payload["queue_size"] = Queue.size() if hasattr(Queue, "size") else 0
+    except Exception:
+        pass
     try:
         import reliability
         payload["keepalive"] = reliability.keepalive.stats()
@@ -98,7 +105,6 @@ async def handle_health(request):
 
 async def start_health_server():
     web_app = web.Application()
-    web_app.router.add_get("/", handle_root)
     web_app.router.add_get("/health", handle_health)
     web_app.router.add_get("/", handle_health)   # Render HEAD / probes → 200
     runner = web.AppRunner(web_app)

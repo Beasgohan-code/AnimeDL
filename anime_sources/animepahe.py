@@ -57,7 +57,10 @@ class AnimePaheSource(BaseProvider):
         )
         if _c_requests is not None:
             # impersonated Chrome TLS stack — avoids the fingerprint block
-            resp = _curl().get(url, impersonate="chrome", **kwargs)
+            try:
+                resp = _curl().get(url, impersonate="chrome", **kwargs)
+            except Exception:  # stale pooled socket -> one fresh retry
+                resp = _curl().get(url, impersonate="chrome", **kwargs)
         else:
             resp = http_session().get(url, **kwargs)
         if resp.status_code != 200:

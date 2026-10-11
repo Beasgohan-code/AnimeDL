@@ -321,6 +321,7 @@ async def handle_health_cmd(client: Client, message):
             ("Pings", uikit.code(f"{ka['total_pings']} ({ka['failed_pings']} failed)")),
             ("Interval", uikit.code(f"{ka['interval']}s")),
             ("Last OK", uikit.code(f"{ka['last_ok_ago_s']}s ago" if ka["last_ok_ago_s"] is not None else "pending")),
+            ("Last error", uikit.code(str(ka.get("last_error") or "none")[:80])),
         ]))
         + uikit.details("📥 Leech", uikit.kv([
             ("Task active", uikit.code("yes" if getattr(BOT.State, "task_going", False) else "no")),

@@ -141,8 +141,23 @@ def http_session():
         with _HTTP_SESSION_LOCK:
             if _HTTP_SESSION is None:
                 from requests.adapters import HTTPAdapter
+                from urllib3.util.retry import Retry
+                # Anime hosts sit behind CDNs that close idle keep-alive
+                # sockets within ~30-60s. Without retries, the first request
+                # after an idle gap died with ConnectionError instead of
+                # transparently reconnecting. Retry re-issues on a FRESH
+                # connection (and rides out brief 5xx blips).
+                _retry = Retry(
+                    total=2, connect=2, read=1, status=2,
+                    backoff_factor=0.25,
+                    status_forcelist=(429, 500, 502, 503, 504),
+                    allowed_methods=frozenset(
+                        {"GET", "HEAD", "OPTIONS", "POST"}),  # POST = idempotent gql reads
+                    raise_on_status=False,
+                )
                 session = _requests.Session()
-                adapter = HTTPAdapter(pool_connections=10, pool_maxsize=20)
+                adapter = HTTPAdapter(pool_connections=10, pool_maxsize=20,
+                                      max_retries=_retry)
                 session.mount("https://", adapter)
                 session.mount("http://", adapter)
                 session.headers["User-Agent"] = DEFAULT_UA
