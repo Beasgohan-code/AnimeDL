@@ -152,24 +152,51 @@ async def check_and_download_ongoing(client: Client, chat_id: int):
     active_source = await db.get_user_setting(0, "active_source", "animetsu")
     print(f"Checking for recently updated anime (Source: {active_source})...")
 
-    animetsu_scraper = None
-    if active_source == "animetsu":
-        from cantarella.scraper.animetsu import AnimetsuScraper
-        animetsu_scraper = AnimetsuScraper()
-        recent_animes = await asyncio.to_thread(fetch_animetsu_recently_updated)
-        downloader = cantarellatvDownloader()
+    # -- Cross-source fallback: these upstream sites rot / block IPs often,
+    #    so if the active source returns nothing we try the other one before
+    #    giving up (a silent empty cycle used to disable auto-uploads).
+    sources_to_try = [active_source]
+    other = "aniwatch" if active_source == "animetsu" else "animetsu"
+    if other not in sources_to_try:
+        sources_to_try.append(other)
 
-        scheduled_data = await asyncio.to_thread(fetch_schedule_list, source="animetsu")
-        scheduled_ids = {item['id'] for item in scheduled_data}
-    else:
-        recent_animes = await asyncio.to_thread(fetch_recently_updated)
-        downloader = cantarellatvDownloader()
-        scheduled_data = await asyncio.to_thread(fetch_schedule_list, source="aniwatch")
-        scheduled_ids = {item['id'] for item in scheduled_data}
+    recent_animes, used_source = [], active_source
+    scheduled_ids = set()
+    animetsu_scraper = None
+    downloader = cantarellatvDownloader()
+
+    for src in sources_to_try:
+        try:
+            if src == "animetsu":
+                from cantarella.scraper.animetsu import AnimetsuScraper
+                animetsu_scraper = AnimetsuScraper()
+                batch = await asyncio.to_thread(fetch_animetsu_recently_updated)
+                sched = await asyncio.to_thread(fetch_schedule_list, source="animetsu")
+            else:
+                animetsu_scraper = None
+                batch = await asyncio.to_thread(fetch_recently_updated)
+                sched = await asyncio.to_thread(fetch_schedule_list, source="aniwatch")
+            if batch:
+                recent_animes, used_source = batch, src
+                scheduled_ids = {item['id'] for item in sched}
+                break
+            print(f"Ongoing source {src}: no recently-updated data")
+        except Exception as e:
+            print(f"Ongoing source {src} failed: {e}")
+
+    if not recent_animes:
+        print(
+            "⚠️ All ongoing sources failed or returned nothing — "
+            "auto-download skipped this cycle (sites may be blocking this server)"
+        )
+        return
+
+    if used_source != active_source:
+        print(f"↪️ Active source {active_source} unavailable — fell back to {used_source}")
 
     for idx, anime in enumerate(recent_animes):
         try:
-            if active_source == "animetsu":
+            if used_source == "animetsu":
                 entries = await asyncio.to_thread(animetsu_scraper.list_episodes, anime['id'])
             else:
                 entries = await asyncio.to_thread(downloader.list_episodes, anime['url'])
@@ -260,7 +287,7 @@ async def check_and_download_ongoing(client: Client, chat_id: int):
 
             # 4. Extract Episode number
             # For Animetsu, we prioritize the episode number from the full list
-            if active_source == "animetsu":
+            if used_source == "animetsu":
                 # Get ep_num from the last entry in the full episode list
                 if entries and entries[-1].get('ep_number'):
                     ani_ep_num = str(entries[-1]['ep_number'])
