@@ -361,14 +361,17 @@ async def handle_sources(client: Client, message):
         parse_mode=ParseMode.HTML,
     )
     with _cf.ThreadPoolExecutor(max_workers=len(order)) as pool:
-        futs = [pool.submit(_probe, s) for s in order]
-        rows = []
+        futs = {pool.submit(_probe, s): s for s in order}
+        verdicts = {}
         for f in _cf.as_completed(futs):
-            src, verdict = f.result()
-            rows.append((SOURCE_NAMES.get(src, src), verdict))
+            try:
+                src, verdict = f.result()
+                verdicts[src] = verdict
+            except Exception as e:
+                verdicts[futs[f]] = f"❌ probe crash: {type(e).__name__}"
 
-    # keep the canonical cycle order in the output
-    rows.sort(key=lambda kv: [n for n, _ in rows].index(kv[0]))
+    # canonical cycle order — plain rebuild, no sorting tricks
+    rows = [(SOURCE_NAMES.get(s, s), verdicts[s]) for s in order if s in verdicts]
     body = "\n".join(f"• {n} — {v}" for n, v in rows)
     overrides = (
         f"🛠 ғɪx ᴀ ᴅᴇᴀᴅ ꜱᴏᴜʀᴄᴇ: ꜱᴇᴛ ᴇɴᴠ ᴏɴ ʀᴇɴᴅᴇʀ\n"
