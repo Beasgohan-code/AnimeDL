@@ -108,6 +108,12 @@ def list_provider_episodes(provider_id: str, anime_id: str) -> list:
     return entries
 
 
+# recovery miss-cache (v4.20.2): one user tap ran recovery up to 6×
+# (2 resolve tries × 3 retry attempts); each miss costs ~15-40s of searches.
+_RECOVERY_MISS_TTL = 180
+_RECOVERY_MISS = {}   # url -> last-miss timestamp
+
+
 def _cross_source_recover(url, progress_queue, name_hint=None):
     """Last-resort: a legacy/dead-source episode URL is re-resolved on LIVE
     sources by show-slug + episode number. Returns (provider, resolved) or
@@ -187,12 +193,20 @@ def _cross_source_recover(url, progress_queue, name_hint=None):
                         _log.getLogger(__name__).info(
                             "recovery(id): %s has %d eps, #%s missing", src, len(eps), ep_num)
                         continue
-                    resolved = _cs2(f"res:{src}:{ep.url}", prov.resolve, ep.url)
+                    try:
+                        resolved = _cs2(f"res:{src}:{ep.url}", prov.resolve, ep.url)
+                    except Exception as _re:
+                        # per-source isolation: one embed crash must not abort the rest
+                        _log.getLogger(__name__).info(
+                            "recovery(id): %s resolve failed: %s", src, _re)
+                        continue
                     if resolved and getattr(resolved, "streams", []):
                         progress_queue.put({"status": f"✅ ꜰᴏᴜɴᴅ ᴏɴ {prov.name} — ᴅᴏᴡɴʟᴏᴀᴅɪɴɢ…"})
                         return prov, resolved
         except Exception as e:
             logging.getLogger(__name__).info("ID-recovery failed: %s", e)
+        logging.getLogger(__name__).info(
+            "recovery(id): exhausted — no source served this episode")
         return None
     if not m_slug:
         if legacy:
@@ -238,7 +252,12 @@ def _cross_source_recover(url, progress_queue, name_hint=None):
                 ep = eps[0]
             if ep is None:
                 continue
-            resolved = _cs(f"res:{src}:{ep.url}", prov.resolve, ep.url)
+            try:
+                resolved = _cs(f"res:{src}:{ep.url}", prov.resolve, ep.url)
+            except Exception as _re:
+                _log.getLogger(__name__).info(
+                    "recovery: %s resolve failed: %s", src, _re)
+                continue
             if resolved and getattr(resolved, "streams", []):
                 _log.getLogger(__name__).info(
                     "cross-source recovery: served by %s", src)
@@ -309,10 +328,19 @@ def download_provider_episode(url: str, download_path: Path, progress_queue,
     # recover: search LIVE sources with the show slug from the URL, match
     # the episode number, and download from whichever source serves it.
     if resolved is None or not getattr(resolved, "streams", []):
-        recovered = _cross_source_recover(
-            url, progress_queue, name_hint=(name_override or title_fallback))
-        if recovered is not None:
-            provider, provider_id, resolved = recovered[0], recovered[0].id, recovered[1]
+        import time as _tm
+        _miss_at = _RECOVERY_MISS.get(url)
+        if _miss_at and _tm.time() - _miss_at < _RECOVERY_MISS_TTL:
+            logging.getLogger(__name__).info(
+                "recovery: skipped — missed for this url %ds ago", int(_tm.time() - _miss_at))
+        else:
+            recovered = _cross_source_recover(
+                url, progress_queue, name_hint=(name_override or title_fallback))
+            if recovered is not None:
+                _RECOVERY_MISS.pop(url, None)
+                provider, provider_id, resolved = recovered[0], recovered[0].id, recovered[1]
+            else:
+                _RECOVERY_MISS[url] = _tm.time()
     if resolved is None or not getattr(resolved, "streams", []):
         raise _SE(f"resolve failed for {url} — no stream on any source")
 

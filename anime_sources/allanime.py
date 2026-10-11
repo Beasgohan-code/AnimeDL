@@ -370,10 +370,27 @@ class AllAnimeSource(BaseProvider):
             raise SourceError("AllAnime: could not parse episode reference")
         show_id, ep_num = m.group(1), m.group(2)
 
-        payload = self._episode_query(show_id, ep_num, mode)
-        raw_urls = self._source_urls_from_payload(payload)   # survives tobeparsed/junk
-        logging.getLogger(__name__).info(
-            "allanime: EP%s of %s → %d sourceUrl(s)", ep_num, show_id, len(raw_urls))
+        # MODE FALLBACK (v4.20.2): specials publish links under only one
+        # audio track — try the requested mode first, then the rest.
+        raw_urls = []
+        for want_mode in [mode] + [m for m in ("sub", "dub", "raw") if m != mode]:
+            try:
+                payload = self._episode_query(show_id, ep_num, want_mode)
+            except Exception as e:  # noqa: BLE001 — one mode failing ≠ all dead
+                logging.getLogger(__name__).info(
+                    "allanime: EP%s [%s] query failed: %s", ep_num, want_mode, e)
+                continue
+            cand = self._source_urls_from_payload(payload)
+            logging.getLogger(__name__).info(
+                "allanime: EP%s of %s [%s] → %d sourceUrl(s)",
+                ep_num, show_id, want_mode, len(cand))
+            if cand:
+                mode, raw_urls = want_mode, cand
+                break
+        if not raw_urls:
+            raise SourceError(
+                "AllAnime: no playable links for this episode "
+                "(sub/dub/raw all empty)")
 
         # sourceUrl entries are marker-prefixed hex-encoded provider paths
         provider_paths = []
