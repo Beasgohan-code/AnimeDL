@@ -68,6 +68,36 @@ def _hex_decode(encoded: str) -> str:
     return "".join(HEX_TABLE.get(encoded[i:i + 2], "") for i in range(0, len(encoded), 2))
 
 
+def _decode_url(raw: str) -> str:
+    """CURRENT (2026) allanime path encodings, from a live API mirror:
+      '--<hex>'  -> bytes.fromhex(...) XOR 0x38 (56)
+      'ap/<hex>' -> plain hex
+    The old ani-cli v4.13 table remains as a fallback for legacy paths."""
+    if not raw:
+        return raw
+    if raw.startswith("--"):
+        try:
+            return bytes(b ^ 56 for b in bytes.fromhex(raw[2:])).decode()
+        except Exception:
+            pass
+    if raw.startswith("ap/"):
+        try:
+            return bytes.fromhex(raw[3:]).decode()
+        except Exception:
+            pass
+    return raw
+
+
+CDN_BASE = "https://allanimenews.com"
+
+SHOW_NAME_GQL = '{show(_id:"SHOW_ID"){name englishName}}'
+
+EPISODE_INFOS_GQL = (
+    "{episodeInfos(showId:\"SHOW_ID\",episodeNumStart:START,"
+    "episodeNumEnd:END){vidInforssub vidInforsdub vidInforsraw}}"
+)
+
+
 class AllAnimeSource(BaseProvider):
     id = "allanime"
     name = "AllAnime"
@@ -80,7 +110,7 @@ class AllAnimeSource(BaseProvider):
                 resp = http_session().post(
                     API,
                     json={"variables": variables, "query": query},
-                    headers={"Referer": REFERER, "User-Agent": UA,
+                    headers={"Referer": REFERER, "Origin": REFERER, "User-Agent": UA,
                              "Content-Type": "application/json"},
                     timeout=(6, 15),
                 )
@@ -92,9 +122,6 @@ class AllAnimeSource(BaseProvider):
                 import time as _t
                 _t.sleep(1.2)
         raise last_exc or SourceError("AllAnime: request failed")
-        if resp.status_code != 200:
-            raise SourceError(f"AllAnime: HTTP {resp.status_code}")
-        return resp.json()
 
     def _site_get(self, path: str, referer: str = None) -> str:
         resp = http_session().get(
@@ -146,6 +173,44 @@ class AllAnimeSource(BaseProvider):
         return eps
 
     # ---------------------------------------------------------------- resolve
+    def show_name(self, show_id: str) -> str:
+        """Display name for a show id (used by cross-source recovery)."""
+        try:
+            data = self._gql({}, SHOW_NAME_GQL.replace("SHOW_ID", show_id))
+            show = (data.get("data", {}) or {}).get("show", {}) or {}
+            return show.get("name") or show.get("englishName") or ""
+        except Exception:
+            return ""
+
+    def _cdn_streams(self, show_id: str, ep_num: str, mode: str) -> list:
+        """Direct MP4s from the allanime CDN (episodeInfos query)."""
+        try:
+            epf = float(ep_num)
+        except ValueError:
+            return []
+        q = (EPISODE_INFOS_GQL.replace("SHOW_ID", show_id)
+             .replace("START", str(int(epf))).replace("END", str(int(epf))))
+        try:
+            data = self._gql({}, q)
+        except Exception:
+            return []
+        infos = (data.get("data", {}) or {}).get("episodeInfos", []) or []
+        streams = []
+        field = {"sub": "vidInforssub", "dub": "vidInforsdub"}.get(mode, "vidInforssub")
+        for info in infos:
+            for vinfo in info.get(field, []) or []:
+                path = (vinfo or {}).get("vidPath", "")
+                if not path:
+                    continue
+                url = path if path.startswith("http") else f"{CDN_BASE}/{path.lstrip('/')}"
+                res = (vinfo or {}).get("vidResolution", "")
+                streams.append({
+                    "quality": f"{res}p" if res else "auto",
+                    "url": url,
+                    "headers": {"Referer": CDN_BASE + "/", "Origin": CDN_BASE},
+                })
+        return streams
+
     def resolve(self, url: str, mode: str = "sub") -> ResolvedEpisode:
         m = re.match(r"allanime://([^/]+)/([^/?#]+)", url)
         if not m:
@@ -172,6 +237,7 @@ class AllAnimeSource(BaseProvider):
             if "tobeparsed" in json.dumps(entry):
                 # AES-CTR encrypted payload
                 surl = self._decode_tobeparsed(str(surl))
+            surl = _decode_url(surl)   # 2026 scheme: XOR-56 / plain hex
             provider_paths.append((sname, surl))
 
         streams = []
@@ -185,6 +251,10 @@ class AllAnimeSource(BaseProvider):
             except Exception as e:
                 continue
 
+        if not streams:
+            # ── Direct-CDN fallback (2026 scheme): episodeInfos exposes MP4s
+            # on allanimenews.com independently of the provider embeds ──
+            streams = self._cdn_streams(show_id, ep_num, mode)
         if not streams:
             raise SourceError("AllAnime: no playable links for this episode")
 

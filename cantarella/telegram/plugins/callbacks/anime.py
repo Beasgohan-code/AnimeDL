@@ -550,7 +550,10 @@ async def on_stream_link(client: Client, callback_query):
             show_alert=True,
         )
 
-    await callback_query.answer("🔗 Resolving stream…")
+    try:
+        await callback_query.answer("🔗 Resolving stream…")
+    except Exception:
+        pass  # stale/double-tapped query id — Telegram rejects it
     try:
         await callback_query.edit_message_caption(
             caption="<blockquote>🔗 <b>ʀᴇꜱᴏʟᴠɪɴɢ ꜱᴛʀᴇᴀᴍ...</b></blockquote>",

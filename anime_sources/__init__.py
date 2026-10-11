@@ -72,8 +72,48 @@ def _cross_source_recover(url, progress_queue):
     u = (url or "").lower()
     legacy = any(k in u for k in ("animetsu", "aniwatch", "animepahe.si/"))
     m_slug = re.search(r"/(?:anime|watch)/([a-z0-9-]+)", u)
-    # legacy hosts: slug from the URL. Live providers: fall back to the
-    # resolve error text (the provider names the show in its message)
+    m_id = re.match(r"([a-z]+)://([^/]+)/([^/?#]+)", u)   # e.g. allanime://<showid>/<ep>
+    if not m_slug and m_id:
+        # ID-only URL: ask the source provider for the show NAME, then
+        # recover the same episode on the live sources by name + number
+        try:
+            src_prov = get_provider(m_id.group(1))
+            name = getattr(src_prov, "show_name", lambda _sid: "")(m_id.group(2))
+            if not name:
+                return None
+            ep_num = m_id.group(3)
+            words = [w for w in re.split(r"[^a-z0-9]+", name.lower()) if w]
+            progress_queue.put({"status": f"🔁 ꜱᴏᴜʀᴄᴇ ꜰᴀɪʟᴇᴅ — ꜰɪɴᴅɪɴɢ '{name}' ᴇᴘ {ep_num} ᴇʟꜱᴇᴡʜᴇʀᴇ…"})
+            from anime_sources.base import cached_streams as _cs2
+            for src in ("hianime", "zangetsu", "gogo"):
+                try:
+                    results = search_provider(src, name)
+                except Exception:
+                    continue
+                if not results:
+                    continue
+                def _score(r, words=words):
+                    rid = str(r.get("id", "")).lower()
+                    return sum(1 for w in words if w in rid)
+                best = max(results, key=_score)
+                if _score(best) == 0:
+                    continue
+                prov = get_provider(src)
+                anime_id = best["id"].split(":", 1)[-1]
+                try:
+                    eps = prov.episodes(anime_id)
+                except Exception:
+                    continue
+                ep = next((e for e in eps if str(e.number) == str(ep_num)), None)
+                if ep is None:
+                    continue
+                resolved = _cs2(f"res:{src}:{ep.url}", prov.resolve, ep.url)
+                if resolved and getattr(resolved, "streams", []):
+                    progress_queue.put({"status": f"✅ ꜰᴏᴜɴᴅ ᴏɴ {prov.name} — ᴅᴏᴡɴʟᴏᴀᴅɪɴɢ…"})
+                    return prov, resolved
+        except Exception as e:
+            logging.getLogger(__name__).info("ID-recovery failed: %s", e)
+        return None
     if not m_slug:
         if legacy:
             return None
