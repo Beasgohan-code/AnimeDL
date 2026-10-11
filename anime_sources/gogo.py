@@ -119,20 +119,39 @@ class GogoSource(BaseProvider):
     # ---------------------------------------------------------------- resolve
     def resolve(self, url: str, mode: str = "sub") -> ResolvedEpisode:
         page = self._get(url).text
-        m_embed = re.search(r'<iframe[^>]+src="([^"]+)"', page)
-        if not m_embed:
-            raise SourceError("Gogo: no embed iframe on episode page")
-        embed_url = m_embed.group(1)
-        if embed_url.startswith("//"):
-            embed_url = "https:" + embed_url
-
         m_name = re.search(r"<h1>(.+?)</h1>", page)
         m_ep = re.search(r"-episode-([0-9.]+)", url)
         title = re.sub(r"<[^>]+>", "", m_name.group(1)).strip() if m_name else "Gogo Anime"
 
-        streams = self._extract_gogoplay(embed_url)
+        # ALL server iframes on the page — primary (gogoplay encrypt-ajax) plus
+        # fallback hosts (mp4upload/streamtape), each routed to its extractor
+        embeds = []
+        for m_if in re.finditer(r'<iframe[^>]+src="([^"]+)"', page):
+            embed = m_if.group(1)
+            if embed.startswith("//"):
+                embed = "https:" + embed
+            if embed not in embeds:
+                embeds.append(embed)
+        if not embeds:
+            raise SourceError("Gogo: no embed iframe on episode page")
+
+        streams = []
+        first_err = None
+        for embed_url in embeds[:3]:
+            try:
+                if "mp4upload" in embed_url or "streamtape" in embed_url \
+                        or "streamta." in embed_url:
+                    from anime_sources.hostextract import resolve_host_embed
+                    got = resolve_host_embed(embed_url, referer=url)
+                else:
+                    got = self._extract_gogoplay(embed_url)
+                streams.extend(got or [])
+            except SourceError as e:
+                # primary embed down → keep trying fallback servers; only if
+                # NOTHING served do we surface the first (primary) error
+                first_err = first_err or e
         if not streams:
-            raise SourceError("Gogo: no streams extracted from embed")
+            raise first_err or SourceError("Gogo: no streams extracted from embed")
 
         def _q(s):
             try:

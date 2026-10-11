@@ -373,6 +373,15 @@ class KaiWaveSource(BaseProvider):
         if depth > 3:
             raise SourceError("AniWave: too many nested players")
         audio = audio or server.get("kind", "sub")
+        # fallback file-hosts get their own extractors (shared packer-based
+        # mp4upload decode + streamtape innerHTML concat)
+        embed_host = url.split("/")[2].lower() if "://" in url else ""
+        if "mp4upload" in embed_host or "streamtape" in embed_host \
+                or "streamta." in embed_host:
+            from anime_sources.hostextract import resolve_host_embed
+            return [Stream(url=s["url"], quality=s.get("quality", "auto"),
+                           audio=audio, headers=s.get("headers") or {})
+                    for s in resolve_host_embed(url, referer=ref)]
         if re.search(r"\.(?:m3u8|mp4)(?:[?#]|$)", url) and "/stream/" not in url:
             return [Stream(url=url, quality="auto", audio=audio,
                            headers={"Referer": ref})]

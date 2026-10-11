@@ -282,20 +282,13 @@ class AnimePaheSource(BaseProvider):
 
     @classmethod
     def _kwik_unpack(cls, data: str, key: str, load, separator) -> tuple:
-        """Decode kwik's eval(function(p,a,c,k,e,d)) payload into (action, _token)."""
-        payload = ""
-        i = 0
-        separator = int(separator)
-        load = int(load)
-        while i < len(data):
-            s = ""
-            while i < len(data) and data[i] != key[separator]:
-                s += data[i]
-                i += 1
-            for index, value in enumerate(key):
-                s = s.replace(value, str(index))
-            payload += chr(int(cls._kwik_step2(s, separator, 10)) - load)
-            i += 1
+        """Decode kwik's eval(function(p,a,c,k,e,d)) payload into (action, _token).
+
+        Delegates to the shared Dean-Edwards decoder (anime_sources/packer
+        machinery lives in hostextract — one implementation for kwik AND
+        mp4upload)."""
+        from anime_sources.hostextract import unpack_packed_js
+        payload = unpack_packed_js(data, key, load, separator)
         m = _ACTION_RE.search(payload)
         if not m:
             raise SourceError("AnimePahe: kwik payload format changed")
