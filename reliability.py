@@ -311,7 +311,16 @@ class Watchdog:
             self.disk_pressure = False
 
     async def _check_disk_full(self) -> None:
-        free_mb = shutil.disk_usage(config.WORK_PATH).free / (1024 * 1024)
+        # /tmp can be GC'd under us mid-run — recreate before measuring,
+        # and fall back to the parent filesystem if that fails too.
+        try:
+            free_mb = shutil.disk_usage(config.WORK_PATH).free / (1024 * 1024)
+        except OSError:
+            try:
+                config.WORK_PATH.mkdir(parents=True, exist_ok=True)
+                free_mb = shutil.disk_usage(config.WORK_PATH).free / (1024 * 1024)
+            except Exception:
+                free_mb = shutil.disk_usage("/tmp").free / (1024 * 1024)
         if self.disk_pressure:
             await self.alert("disk", "💽 Disk critically low", [
                 ("Free", uikit.code(f"{free_mb:.0f} MB")),

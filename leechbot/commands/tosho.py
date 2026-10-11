@@ -18,6 +18,7 @@ import re
 from html import unescape
 
 import requests
+from bs4 import BeautifulSoup
 from pyrogram import filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -28,13 +29,65 @@ import uikit
 logger = logging.getLogger(__name__)
 
 TOSHO_BASE = os.getenv("ANIMEDL_TOSHO_BASE", "https://feed.animetosho.org").rstrip("/")
+TOSHO_SITE = os.getenv("ANIMEDL_TOSHO_SITE", "https://www.animetosho.org").rstrip("/")
 
 # user_id -> list of entries {title, ddl, magnet, size}
 TOSHO_RESULTS = {}
 
 
+def _is_unreachable(e: Exception) -> bool:
+    """DNS failure / connection refused (e.g. the host is blocked from
+    this server's network)."""
+    if isinstance(e, requests.exceptions.ConnectionError):
+        text = str(e).lower()
+        return "name or service not known" in text or "failed to resolve" in text or "max retries" in text
+    return False
+
+
+def _search_html(query: str, limit: int = 8) -> list:
+    """Route B: scrape the website search when the feed host is unreachable.
+    DDL/magnet links are resolved later from the per-item view page."""
+    resp = requests.get(
+        f"{TOSHO_SITE}/search",
+        params={"q": query},
+        headers={"User-Agent": "Mozilla/5.0"},
+        timeout=20,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"animetosho (html): HTTP {resp.status_code}")
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    out = []
+    items = soup.find_all("div", class_=["home_list_item", "torrent_info"])
+    for item in items[:limit * 2]:
+        a = item.find("a", href=True)
+        if not a or "/view/" not in a["href"]:
+            continue
+        title = a.get_text(strip=True)[:110] or "Unknown"
+        view = a["href"]
+        if view.startswith("/"):
+            view = TOSHO_SITE + view
+        out.append({"title": title, "ddl": "", "magnet": "", "size": "?", "view_url": view})
+        if len(out) >= limit:
+            break
+    return out
+
+
 def search_tosho(query: str, limit: int = 8) -> list:
-    """Search AnimeTosho (JSON API); returns parsed entries with DDL+magnet."""
+    """Search AnimeTosho: JSON feed first, HTML route on failure.
+    Returns parsed entries with DDL+magnet (HTML route defers DDL
+    resolution to the view page at pick time)."""
+    try:
+        return _search_json(query, limit)
+    except (requests.exceptions.ConnectionError, RuntimeError) as e:
+        if _is_unreachable(e):
+            logger.warning("tosho feed host unreachable (%s) — trying HTML route", e)
+        elif isinstance(e, requests.exceptions.ConnectionError):
+            raise
+        return _search_html(query, limit)
+
+
+def _search_json(query: str, limit: int = 8) -> list:
     resp = requests.get(
         f"{TOSHO_BASE}/json",
         params={"show": "files", "q": query, "nojump": "1"},
@@ -78,6 +131,24 @@ def _sanitize(name: str) -> str:
     return re.sub(r"[^\w\s.\-()\[\]]", "", name).strip()[:120] or "tosho_download"
 
 
+def resolve_tosho_view(view_url: str) -> dict:
+    """Pull DDL + magnet off an animetosho /view/ page (HTML route)."""
+    resp = requests.get(view_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+    if resp.status_code != 200:
+        raise RuntimeError(f"animetosho view: HTTP {resp.status_code}")
+    soup = BeautifulSoup(resp.text, "html.parser")
+    ddl, magnet = "", ""
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if not ddl and (href.startswith("https://ddl.animetosho.org") or "/file/" in href):
+            ddl = href
+        if not magnet and href.startswith("magnet:?"):
+            magnet = href
+        if ddl and magnet:
+            break
+    return {"ddl": ddl, "magnet": magnet}
+
+
 # =============================================================================
 # /tosho <query>
 # =============================================================================
@@ -103,6 +174,15 @@ async def tosho_search_command(client, message):
     import asyncio as _aio
     try:
         entries = await _aio.to_thread(search_tosho, query)
+    except requests.exceptions.ConnectionError as e:
+        if _is_unreachable(e):
+            await status.edit_text(
+                "❌ AnimeTosho is unreachable from this server's network.\n"
+                "💡 Try <code>/nyaasearch " + _html.escape(query) + "</code> — the torrent route uses a different host."
+            )
+            return
+        await status.edit_text(f"❌ AnimeTosho search failed: <code>{_html.escape(str(e))}</code>")
+        return
     except Exception as e:
         await status.edit_text(f"❌ AnimeTosho search failed: <code>{_html.escape(str(e))}</code>")
         return
@@ -150,6 +230,18 @@ async def on_tosho_pick(client, callback_query):
     picked = entries[idx]
     if BOT.State.task_going:
         return await callback_query.answer("⚠️ A task is already running.", show_alert=True)
+
+    if not picked["ddl"] and not picked["magnet"] and picked.get("view_url"):
+        import asyncio as _aio
+        try:
+            got = await _aio.to_thread(resolve_tosho_view, picked["view_url"])
+            picked.update(got)
+        except Exception as e:
+            return await callback_query.answer(
+                f"❌ Could not fetch the download links: {e}", show_alert=True)
+        if not picked["ddl"] and not picked["magnet"]:
+            return await callback_query.answer(
+                "❌ No DDL/magnet found on that page.", show_alert=True)
 
     source = picked["ddl"] or picked["magnet"]
     if source.startswith("magnet:"):

@@ -116,6 +116,15 @@ async def nyaa_search_command(client, message):
 
     try:
         entries = await _aio.to_thread(search_nyaa, query)
+    except requests.exceptions.ConnectionError as e:
+        if "resolve" in str(e).lower() or "name or service" in str(e).lower() or "max retries" in str(e).lower():
+            await status.edit_text(
+                "❌ Nyaa is unreachable from this server's network.\n"
+                "💡 Try <code>/tosho " + _html.escape(query) + "</code> — AnimeTosho mirrors the same torrents as direct downloads."
+            )
+            return
+        await status.edit_text(f"❌ Nyaa search failed: <code>{_html.escape(str(e))}</code>")
+        return
     except Exception as e:
         await status.edit_text(f"❌ Nyaa search failed: <code>{_html.escape(str(e))}</code>")
         return
