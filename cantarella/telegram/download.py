@@ -202,6 +202,17 @@ async def __handle_download_internal(client: Client, message, url, status_msg, i
                 uploaded_messages.append(up_msg)
                 upload_q.put({'uploaded': True})
 
+                # 📨 Per-user DM copy (toggle in /settings → "DM Copy"):
+                # every uploaded file is also sent to the chat that asked
+                # for it, so users don't have to dig through the channel.
+                try:
+                    if user_chat_id and user_chat_id != chat_id:
+                        from cantarella.core.database import db as _db
+                        if await _db.get_user_setting(0, "dm_copy", False):
+                            await client.copy_message(user_chat_id, chat_id, up_msg.id)
+                except Exception as _dm_err:
+                    print(f"DM copy failed (user must have started the bot): {_dm_err}")
+
                 # --- Auto-Delete Logic for User PM ---
                 # Check if this is a private chat (user PM) or if we should delete in the target chat too
                 async def check_and_schedule_autodel(target_id):

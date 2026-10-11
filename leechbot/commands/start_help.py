@@ -85,7 +85,7 @@ MODULES = [
     ]},
     # ── Settings ──
     {"id": "nyaa", "name": "Nyaa", "desc": "Search Nyaa torrents and leech them.", "cat": "Leech", "cmds": [
-        ("/nyaasearch <query>", "Search Nyaa, tap a torrent to leech"),
+        {"cmd": "/nyaasearch <query>", "desc": "Search Nyaa, tap a torrent to leech"},
     ]},
     {"id": "settings", "name": "Settings", "desc": "Configure bot preferences and options.", "cat": "Settings", "cmds": [
         {"cmd": "/settings", "desc": "Open interactive settings menu"},
@@ -346,7 +346,13 @@ def _build_mod_view(mod_id: str):
 
     text = f"<b>Here is the help for the {mod['name']} module:</b>\n\n"
     for c in mod["cmds"]:
-        text += f"❖ <b>{c['cmd']}</b> — {c['desc']}\n"
+        # accept both {"cmd","desc"} dicts and (cmd, desc) tuples — a bare
+        # tuple once crashed this whole view with TypeError
+        if isinstance(c, dict):
+            cmd, desc = c.get("cmd", "?"), c.get("desc", "")
+        else:
+            cmd, desc = (c + ("",))[:2] if isinstance(c, tuple) else (str(c), "")
+        text += f"❖ <b>{cmd}</b> — {desc}\n"
 
     cat = next((c for c in CATEGORIES if c["id"] == mod["cat"]), None)
     back_data = f"help_cat_{mod['cat']}" if cat else "help_all_0"

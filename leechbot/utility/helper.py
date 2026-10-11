@@ -624,6 +624,14 @@ async def message_deleter(user_msg, bot_msg):
 # =============================================================================
 # Settings Menu
 # =============================================================================
+async def _dm_copy_flag() -> bool:
+    try:
+        from cantarella.core.database import db as _adb
+        return await _adb.get_user_setting(0, "dm_copy", False)
+    except Exception:
+        return False
+
+
 async def send_settings(client, message, msg_id: int, is_command: bool):
     """Send or edit the interactive settings menu (rich panel + styled buttons)."""
     on_off = lambda v: ("✅ On" if v else "❌ Off")
@@ -665,6 +673,7 @@ async def send_settings(client, message, msg_id: int, is_command: bool):
             uikit.btn(f"⏳ Auto-Del: {on_off(BOT.Setting.auto_delete)}", callback_data="autodelete", style="default"),
         ],
         [uikit.btn(f"📸 Auto-SS: {on_off(BOT.Setting.auto_screenshot)}", callback_data="screenshot", style="default")],
+        [uikit.btn(f"📨 DM Copy: {on_off(bool(await _dm_copy_flag()))}", callback_data="toggle_dm_copy", style="default")],
     ]
     if anime:
         rows += [

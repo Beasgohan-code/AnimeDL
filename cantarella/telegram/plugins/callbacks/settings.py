@@ -46,6 +46,17 @@ async def on_toggle_ongoing(client: Client, callback_query):
     )
 
 
+@Client.on_callback_query(filters.regex("^toggle_dm_copy$"))
+async def on_toggle_dm_copy(client: Client, callback_query):
+    if not await _authorized(callback_query):
+        return await callback_query.answer("❌ ᴀᴅᴍɪɴꜱ ᴏɴʟʏ.", show_alert=True)
+    current = await db.get_user_setting(0, "dm_copy", False)
+    new_status = not current
+    await db.set_user_setting(0, "dm_copy", new_status)
+    await callback_query.answer(f"📨 DM copy: {'ON' if new_status else 'OFF'}")
+    await _rerender_unified(client, callback_query)
+
+
 @Client.on_callback_query(filters.regex("^toggle_mapping_mode$"))
 async def on_toggle_mapping_mode(client: Client, callback_query):
     if not await _authorized(callback_query):
