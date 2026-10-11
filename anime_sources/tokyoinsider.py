@@ -24,7 +24,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from anime_sources.base import (
-    http_session,
+    http_session, tls_get,
     BaseProvider, Episode, ResolvedEpisode, SearchResult, SourceError,
     Stream, DEFAULT_UA,
 )
@@ -53,15 +53,12 @@ class TokyoInsiderSource(BaseProvider):
     name = "TokyoInsider"
 
     def _get(self, url: str) -> str:
-        resp = http_session().get(
+        resp = tls_get(
             url,
             headers={"User-Agent": DEFAULT_UA, "Referer": BASE + "/"},
             timeout=(6, 20),
         )
-        if resp.status_code != 200:
-            raise SourceError(f"TokyoInsider: HTTP {resp.status_code}")
         return resp.text
-
     # ------------------------------------------------------------ index list
     def _anime_list(self) -> list:
         now = time.time()

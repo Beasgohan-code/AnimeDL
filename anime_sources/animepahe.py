@@ -26,7 +26,7 @@ except ImportError:  # pragma: no cover
     _c_requests = None
 
 from anime_sources.base import (
-    http_session,
+    http_session, looks_like_challenge,
     BaseProvider, Episode, ResolvedEpisode, SearchResult, SourceError, DEFAULT_UA,
 )
 
@@ -74,6 +74,8 @@ class AnimePaheSource(BaseProvider):
             resp = http_session().get(url, headers=headers, timeout=20, params=params)
         if resp.status_code != 200:
             raise SourceError(f"AnimePahe: HTTP {resp.status_code}")
+        if looks_like_challenge(resp.text[:4000]):
+            raise SourceError("Cloudflare challenge on animepahe")
         return resp
 
     # ---------------------------------------------------------------- search

@@ -21,11 +21,15 @@ import re
 from urllib.parse import unquote
 
 from anime_sources.base import (
-    http_session,
-    BaseProvider, Episode, ResolvedEpisode, SearchResult, SourceError, DEFAULT_UA,
+    http_session, tls_get, SourceError,
+    BaseProvider, Episode, ResolvedEpisode, SearchResult, SourceError as _SE,
+    DEFAULT_UA,
 )
 
 BASE = os.getenv("ANIMEDL_ANIMEGG_BASE", "https://www.animegg.org")
+_BASES = [BASE]
+if BASE == "https://www.animegg.org":
+    _BASES.append("https://animegg.org")  # bare domain rides the same origin
 
 _MSE_RE = re.compile(r'<a\b[^>]*class=["\'][^"\']*\bmse\b[^"\']*["\'][^>]*>([\s\S]*?)</a>', re.I)
 _HREF_RE = re.compile(r'href=["\']([^"\']+)["\']', re.I)
@@ -76,16 +80,38 @@ class AnimeGGSource(BaseProvider):
     name = "AnimeGG"
 
     def _get(self, url: str, referer: str = None):
-        resp = http_session().get(
-            url,
-            headers={"User-Agent": DEFAULT_UA, "Referer": referer or f"{BASE}/"},
-            timeout=(6, 20),
-        )
-        if resp.status_code != 200:
-            raise SourceError(f"AnimeGG: HTTP {resp.status_code}")
-        return resp
+        """Chrome-TLS GET; on a block, retry the same path on the alternate
+        base (www ↔ bare). Plain datacenter requests were 403ing → 0 results."""
+        last = None
+        for b in _BASES:
+            target = re.sub(r"^https?://[^/]+/", b + "/", url) \
+                if url.startswith("http") else f"{b}/{url.lstrip('/')}"
+            try:
+                return tls_get(
+                    target,
+                    headers={"User-Agent": DEFAULT_UA, "Referer": referer or f"{_BASES[0]}/"},
+                    timeout=(6, 20),
+                )
+            except SourceError as e:
+                last = e
+        raise last or SourceError("AnimeGG: fetch failed")
 
     # ---------------------------------------------------------------- search
+    @staticmethod
+    def _fallback_series_links(body: str) -> list:
+        """Markup-drift fallback: when no `mse` anchors parse, harvest any
+        /series/<slug> links on the page (recovery's word-overlap scoring
+        filters navigation junk downstream)."""
+        out = []
+        for m in re.finditer(r'href=["\']/series/([a-z0-9-]+)/?["\'][^>]*>([^<]{2,80})', body, re.I):
+            slug = m.group(1)
+            text = _strip_tags(m.group(2)) or slug.replace("-", " ")
+            if slug not in {r["slug"] for r in out}:
+                out.append({"slug": slug, "text": text})
+            if len(out) >= 10:
+                break
+        return out
+
     def _search_once(self, query: str) -> list:
         body = self._get(f"{BASE}/search/", params={"q": query}).text
         results = []
@@ -105,6 +131,8 @@ class AnimeGGSource(BaseProvider):
             })
             if len(results) >= 10:
                 break
+        if not results:
+            results = self._fallback_series_links(body)
         return results
 
     def search(self, query: str) -> list:

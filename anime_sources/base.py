@@ -170,6 +170,88 @@ def http_session():
     return _HTTP_SESSION
 
 
+# ---------------------------------------------------------------------------
+#  Chrome TLS impersonation helper — Cloudflare-family hosts (gogo, animegg,
+#  tokyoinsider, the aniwave family, animepahe) fingerprint the TLS handshake
+#  and 403/503 plain python-requests from datacenter IPs, while the SAME
+#  request with a Chrome curl-impersonate fingerprint sails through (this is
+#  exactly why hianime works where the others returned 0).
+# ---------------------------------------------------------------------------
+_CURL_MOD = None  # module cache: import-able curl_cffi.requests, or False
+
+
+def curl_session():
+    """curl_cffi.requests module, or None when not installed."""
+    global _CURL_MOD
+    if _CURL_MOD is None:
+        try:
+            from curl_cffi import requests as _c
+            _CURL_MOD = _c
+        except ImportError:
+            _CURL_MOD = False
+    return _CURL_MOD or None
+
+
+_CHALLENGE_MARKERS = (
+    "Just a moment", "cf-browser-verification", "challenge-platform",
+    "__cf_chl_", "cf-chl", "Attention Required", "cf-mitigated: challenge",
+)
+
+
+def looks_like_challenge(text: str) -> bool:
+    """Heuristic Cloudflare/DDoS-Guard interstitial detection."""
+    if not text:
+        return False
+    return any(m in text for m in _CHALLENGE_MARKERS)
+
+
+def describe_source_error(e: Exception) -> str:
+    """One-line human reason a source probe failed (for /sources rows)."""
+    if isinstance(e, SourceError):
+        msg = str(e)
+    else:
+        msg = f"{type(e).__name__}: {e}"
+    return re.sub(r"\s+", " ", str(msg)).strip()[:60] or "unknown error"
+
+
+def _tls_guard(resp, url: str):
+    """Raise a descriptive SourceError on blocks; pass responses through."""
+    host = url.split("/")[2] if "://" in url else url
+    try:
+        head = resp.text[:4000]
+    except Exception:
+        head = ""
+    if looks_like_challenge(head):
+        raise SourceError(f"Cloudflare challenge on {host}")
+    code = getattr(resp, "status_code", 0)
+    if code in (401, 403, 429, 503):
+        raise SourceError(f"blocked (HTTP {code}) on {host}")
+    if code != 200:
+        raise SourceError(f"HTTP {code} on {host}")
+    return resp
+
+
+def tls_get(url: str, headers: dict = None, params: dict = None,
+            timeout=(6, 20), impersonate: str = "chrome124"):
+    """GET with a Chrome TLS fingerprint; plain-session fallback.
+
+    Raises SourceError with the concrete reason (challenge / HTTP code) so
+    /sources can show WHY a source is dead instead of a bare 0.
+    """
+    mod = curl_session()
+    if mod is not None:
+        try:
+            resp = mod.get(url, headers=headers, params=params,
+                           timeout=timeout, impersonate=impersonate)
+            return _tls_guard(resp, url)
+        except SourceError:
+            raise
+        except Exception:
+            pass  # curl-level failure (DNS, TLS) → plain-session attempt
+    resp = http_session().get(url, headers=headers, params=params, timeout=timeout)
+    return _tls_guard(resp, url)
+
+
 def cached_streams(cache_key: str, fetch, *args):
     """Cache resolved stream URLs (10 min TTL).
 

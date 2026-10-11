@@ -14,7 +14,7 @@ from urllib.parse import urljoin
 import requests
 
 from anime_sources.base import (
-    http_session,
+    http_session, tls_get,
     BaseProvider, Episode, ResolvedEpisode, SearchResult, SourceError, DEFAULT_UA,
 )
 import os
@@ -56,10 +56,9 @@ class GogoSource(BaseProvider):
         raise last or SourceError("Gogo: all mirrors failed")
 
     def _get(self, url: str, **kw) -> requests.Response:
-        resp = http_session().get(url, headers={"User-Agent": DEFAULT_UA}, timeout=(6, 15), **kw)
-        if resp.status_code != 200:
-            raise SourceError(f"Gogo: HTTP {resp.status_code}")
-        return resp
+        # Chrome TLS fingerprint — gogo-family sites 403 plain datacenter
+        # python-requests (this exact block made /sources report 0 forever)
+        return tls_get(url, headers={"User-Agent": DEFAULT_UA}, timeout=(6, 15), **kw)
 
     # ---------------------------------------------------------------- search
     def search(self, query: str) -> list:

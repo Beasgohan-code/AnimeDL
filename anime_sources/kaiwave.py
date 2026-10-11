@@ -26,7 +26,7 @@ from urllib.parse import parse_qs, quote, urlparse, urljoin
 from bs4 import BeautifulSoup
 
 from anime_sources.base import (
-    http_session,
+    http_session, looks_like_challenge,
     BaseProvider, Episode, ResolvedEpisode, SearchResult, SourceError, DEFAULT_UA,
 )
 
@@ -166,12 +166,18 @@ class KaiWaveSource(BaseProvider):
             try:
                 resp = session.get(url, headers=headers, timeout=(6, 20), impersonate="chrome124")
                 resp.raise_for_status()
+                if looks_like_challenge(resp.text[:4000]):
+                    raise SourceError(f"Cloudflare challenge on {url.split('/')[2]}")
                 return resp
+            except SourceError:
+                raise  # real block → let _fetch walk to the next mirror
             except Exception:
-                pass  # fall through to plain requests
+                pass  # curl-level failure (DNS/TLS) → plain requests
         resp = http_session().get(url, headers=headers, timeout=(6, 20))
         if resp.status_code != 200:
             raise SourceError(f"AniWave: HTTP {resp.status_code}")
+        if looks_like_challenge(resp.text[:4000]):
+            raise SourceError(f"Cloudflare challenge on {url.split('/')[2]}")
         return resp
 
     @property

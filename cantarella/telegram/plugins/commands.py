@@ -435,11 +435,15 @@ async def handle_sources(client: Client, message):
     order = [s for s in SOURCE_CYCLE if s not in ("animetsu", "aniwatch")]
 
     def _probe(src):
+        # Bypass search_provider()'s swallow-all wrapper: a Cloudflare 403
+        # and a genuine empty result must NOT look the same — report the
+        # concrete block reason so a dead source can actually be fixed.
+        from anime_sources.base import get_provider, describe_source_error
         try:
-            res = search_provider(src, "dr stone")
+            res = get_provider(src).search("dr stone")
             return src, (f"✅ {len(res)} results" if res else "⚠️ 0 results")
         except Exception as e:
-            return src, f"❌ {type(e).__name__}: {str(e)[:40]}"
+            return src, f"❌ {describe_source_error(e)}"
 
     status = await message.reply(
         "<blockquote>🩺 ᴘʀᴏʙɪɴɢ ᴀʟʟ ꜱᴏᴜʀᴄᴇꜱ... (ᴍᴀx ~15ꜱ)</blockquote>",
@@ -461,7 +465,8 @@ async def handle_sources(client: Client, message):
     overrides = (
         f"🛠 ғɪx ᴀ ᴅᴇᴀᴅ ꜱᴏᴜʀᴄᴇ: ꜱᴇᴛ ᴇɴᴠ ᴏɴ ʀᴇɴᴅᴇʀ\n"
         f"<code>ANIMEDL_HIANIME_BASE=https://hianime.bz</code>\n"
-        f"<code>GOGO_BASE=…</code> · <code>ZANGETSU_BASE=…</code>\n"
+        f"<code>GOGO_BASE=…</code> · <code>ANIMEDL_ANIWAVE_BASE=…</code>\n"
+        f"<code>ANIMEDL_ANIMEGG_BASE=…</code> · <code>ZANGETSU_BASE=…</code>\n"
         f"ᴍɪʀʀᴏʀꜱ ᴛʀɪᴇᴅ ғᴏʀ ʜɪᴀɴɪᴍᴇ: {len(HIANIME_BASES)}"
     )
     panel = (
