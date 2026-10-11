@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 # @app.on_message(filters.command("ping") & filters.private)
 async def ping_command(client, message):
     start = datetime.now()
-    msg = await message.reply_text("<b>🏓 Pinging...</b>", quote=True)
+    msg = await message.reply_text("<b>🏓 Pinging...</b>")
     latency_ms = (datetime.now() - start).total_seconds() * 1000
     uptime = getTime(int((datetime.now() - BotStats.start_time).total_seconds()))
 

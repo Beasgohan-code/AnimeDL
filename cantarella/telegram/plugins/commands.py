@@ -510,7 +510,11 @@ async def handle_nextep(client: Client, message):
     try:
         entries = await _asyncio.to_thread(airschedule.lookup, query)
     except Exception as e:
-        return await uikit.edit(sts, uikit.error_panel("Schedule lookup failed", e), client=client)
+        return await uikit.edit(sts, uikit.error_panel(
+            "Schedule lookup failed", e,
+            hint="Try the romaji title (e.g. <code>/nextep Sousou no Frieren</code>) "
+                 "or retry in a minute — the schedule service may be busy."),
+            client=client)
 
     if not entries:
         return await uikit.edit(sts, uikit.panel(

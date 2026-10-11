@@ -51,7 +51,7 @@ class _FakeMessage:
     async def delete(self):
         pass
 
-    async def reply_text(self, text, quote=True, link_preview_options=None, reply_markup=None):
+    async def reply_text(self, text, link_preview_options=None, reply_markup=None):
         return await app.send_message(
             chat_id=self.chat.id,
             text=text,

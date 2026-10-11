@@ -70,9 +70,26 @@ def lookup(query: str, max_results: int = 3) -> list:
     if resp.status_code != 200:
         raise RuntimeError(f"animeschedule API: HTTP {resp.status_code}")
 
-    entries = resp.json() or []
+    # The API normally returns a JSON array, but error/rate-limit responses
+    # come back as an object ({"message": ...}) — slicing a dict raises
+    # "unhashable type: 'slice'", so normalize every shape defensively.
+    try:
+        payload = resp.json()
+    except ValueError as e:
+        raise RuntimeError(
+            f"animeschedule API returned non-JSON body (HTTP {resp.status_code})"
+        ) from e
+    if isinstance(payload, dict):
+        payload = (
+            payload.get("anime") or payload.get("data")
+            or payload.get("results") or []
+        )
+    if not isinstance(payload, list):
+        payload = []
+    entries = [e for e in payload if isinstance(e, dict)][:max_results]
+
     results = []
-    for entry in entries[:max_results]:
+    for entry in entries:
         route = entry.get("route") or ""
         item = {
             "title": entry.get("english") or entry.get("title") or "Unknown",

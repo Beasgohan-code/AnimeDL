@@ -1,23 +1,147 @@
 # AnimeDL — leech module. Based on LeechBot (MIT License) — see LICENSES/LeechBot-LICENSE.
 # =============================================================================
-
-"""
-Debug logging and error reporting to Telegram.
-
-Provides:
-- TelegramLogHandler: sends ERROR/CRITICAL logs to DUMP_ID channel
-- setup_error_reporting: installs asyncio + Pyrogram error hooks
-- send_debug: manual debug message sender
-"""
+#
+# """
+# Debug logging and error reporting to Telegram — v2.
+#
+# What a report contains now:
+# - 🕒 full UTC timestamp (date + time, not just clock time)
+# - ⏱️ bot uptime (restarts become obvious)
+# - 🧩 logging module + 🧭 handler that raised (parsed from the dispatcher log)
+# - 📍 top application-code location: file:lineno · function
+# - 💥 exception type + message on its own line (no traceback-reading needed)
+# - cleaned tracebacks: site-packages shortened to <pkg>/, /app/ stripped
+# - 🔁 repeat suppression: the same error is silent for 10 minutes; the next
+#   report carries a "+N suppressed" counter (a ping is re-sent every 25th
+#   repeat so a persistent error can never fully disappear)
+# - tracebacks too big to render inline are attached as a .txt document
+#   instead of being bluntly truncated
+#
+# Provides:
+# - TelegramLogHandler: sends ERROR/CRITICAL logs to DUMP_ID channel
+# - AsyncExceptionHandler: catches unhandled asyncio task exceptions
+# - setup_error_reporting: installs both hooks
+# - send_debug: manual debug message sender
+# """
 
 import asyncio
+import io
 import logging
+import re
+import time
 import traceback
-from datetime import datetime
-from pyrogram import types
+from datetime import datetime, timezone
+
 import uikit
+from pyrogram import types
 
 logger = logging.getLogger(__name__)
+
+# -----------------------------------------------------------------------------
+# Formatting knobs
+# -----------------------------------------------------------------------------
+SUPPRESS_WINDOW = 600.0   # seconds an identical error fingerprint stays silent
+RESEND_EVERY = 25         # …but re-send every Nth repeat as a heartbeat
+MAX_TB_CHARS = 3200       # traceback chars kept inline before switching to a file
+MAX_ASYNC_TB_CHARS = 2400
+
+_PROC_START = time.time()
+
+
+# -----------------------------------------------------------------------------
+# Shared helpers
+# -----------------------------------------------------------------------------
+def _utc_now_str() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def _file_stamp() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+
+
+def _uptime_str() -> str:
+    """Time since bot start (BotStats.start_time when available)."""
+    secs = None
+    try:
+        from leechbot.utility.variables import BotStats
+
+        secs = max(0, int((datetime.now() - BotStats.start_time).total_seconds()))
+    except Exception:
+        pass
+    if secs is None:
+        secs = max(0, int(time.time() - _PROC_START))
+    days, rem = divmod(secs, 86400)
+    hours, rem = divmod(rem, 3600)
+    mins = rem // 60
+    if days:
+        return f"{days}d {hours}h {mins}m"
+    if hours:
+        return f"{hours}h {mins}m"
+    return f"{mins}m"
+
+
+def _clean_tb(text: str) -> str:
+    """Shorten library paths so application frames stand out."""
+    text = re.sub(
+        r'File "(?:/usr/local/lib/python[\d.]+/)?(?:src/)?(?:\.?venv/lib/python[\d.]+/)?site-packages/',
+        'File "<pkg>/',
+        text,
+    )
+    return (
+        text.replace("/app/", "")
+        .replace("/home/user/AnimeDL/", "")
+    )
+
+
+def _tb_tail(text: str, limit: int = MAX_TB_CHARS) -> str:
+    """Keep the traceback header and the deepest frames that fit the limit."""
+    if len(text) <= limit:
+        return text
+    lines = text.splitlines(keepends=True)
+    kept, total = [], len(lines[0]) + 20
+    for line in reversed(lines[1:]):
+        if total + len(line) > limit:
+            break
+        kept.insert(0, line)
+        total += len(line)
+    return lines[0] + "…\n" + "".join(kept)
+
+
+def _location(exc_info) -> str | None:
+    """file:lineno · func of the deepest non-library frame (where *we* broke)."""
+    try:
+        if not exc_info or not exc_info[2]:
+            return None
+        tb, last, app = exc_info[2], None, None
+        while tb:
+            last = tb
+            fname = tb.tb_frame.f_code.co_filename
+            if "site-packages" not in fname and "<frozen" not in fname:
+                app = tb
+            tb = tb.tb_next
+        target = app or last
+        if not target:
+            return None
+        fname = target.tb_frame.f_code.co_filename
+        fname = (
+            fname.replace("/app/", "")
+            .replace("/home/user/AnimeDL/", "")
+        )
+        return f"{fname}:{target.tb_lineno} · {target.tb_frame.f_code.co_name}"
+    except Exception:
+        return None
+
+
+def _exc_summary(exc) -> str | None:
+    if exc is None:
+        return None
+    return f"{type(exc).__name__}: {exc}"[:300]
+
+
+def _handler_name(log_text: str) -> str | None:
+    """pyrogram logs 'Unexpected exception raised in MessageHandler:'."""
+    m = re.search(r"raised in (\w+)", log_text or "")
+    return m.group(1) if m else None
 
 
 # =============================================================================
@@ -26,7 +150,8 @@ logger = logging.getLogger(__name__)
 class TelegramLogHandler(logging.Handler):
     """
     Logging handler that sends ERROR and CRITICAL level messages
-    to the configured DUMP_ID channel via Telegram.
+    to the configured DUMP_ID channel via Telegram — with dedup,
+    structured context and document fallback for huge tracebacks.
     """
 
     def __init__(self, client, dump_id: int, level=logging.ERROR):
@@ -36,20 +161,45 @@ class TelegramLogHandler(logging.Handler):
         self._loop = None
         self._queue = asyncio.Queue()
         self._running = False
+        self._suppressed = {}  # fingerprint -> [repeat_count, monotonic_ts]
+
+    # -- dedup ---------------------------------------------------------------
+    def _fingerprint(self, record):
+        exc = record.exc_info[1] if record.exc_info else None
+        if exc is not None:
+            return (record.name, type(exc).__name__, _location(record.exc_info))
+        return (record.name, record.getMessage()[:80], None)
 
     def emit(self, record):
-        """Queue the log record for async sending."""
+        """Dedup-check the record, then queue it for async sending."""
         if not self._running:
             return
-        # Suppress noisy non-critical errors
-        msg_text = record.getMessage() if hasattr(record, 'getMessage') else str(record)
+        msg_text = record.getMessage() if hasattr(record, "getMessage") else str(record)
         if "QueryIdInvalid" in msg_text or "QUERY_ID_INVALID" in msg_text:
             return
         try:
-            msg = self.format(record)
+            now = time.monotonic()
+            fp = self._fingerprint(record)
+            entry = self._suppressed.get(fp)
+            repeats = 0
+            if entry and now - entry[1] < SUPPRESS_WINDOW:
+                entry[0] += 1
+                entry[1] = now
+                if entry[0] % RESEND_EVERY:  # silent, except every Nth repeat
+                    return
+                repeats = entry[0]
+            else:
+                if entry:
+                    repeats = entry[0]
+                self._suppressed[fp] = [0, now]
+                if len(self._suppressed) > 64:  # prune stale fingerprints
+                    for stale in list(self._suppressed)[:-32]:
+                        self._suppressed.pop(stale, None)
+
+            body, file_tb = self.format(record, repeats=repeats)
             loop = self._loop
             if loop and loop.is_running():
-                loop.call_soon_threadsafe(self._queue.put_nowait, msg)
+                loop.call_soon_threadsafe(self._queue.put_nowait, (body, file_tb))
         except Exception:
             pass
 
@@ -57,15 +207,20 @@ class TelegramLogHandler(logging.Handler):
         """Background task that sends queued messages to Telegram."""
         while self._running:
             try:
-                msg = await asyncio.wait_for(self._queue.get(), timeout=5.0)
+                item = await asyncio.wait_for(self._queue.get(), timeout=5.0)
             except asyncio.TimeoutError:
                 continue
             except Exception:
                 await asyncio.sleep(1)
                 continue
 
+            body, file_tb = item if isinstance(item, tuple) else (item, None)
             try:
-                await uikit.send(self.client, self.dump_id, msg)
+                await uikit.send(self.client, self.dump_id, body)
+                if file_tb:
+                    doc = io.BytesIO(file_tb.encode("utf-8", "replace"))
+                    doc.name = f"traceback-{_file_stamp()}.txt"
+                    await self.client.send_document(self.dump_id, doc)
             except Exception as e:
                 # Don't recurse — just log to stderr
                 print(f"[TelegramLogHandler] Failed to send log: {e}", flush=True)
@@ -80,33 +235,54 @@ class TelegramLogHandler(logging.Handler):
         """Stop the background sender."""
         self._running = False
 
-    def format(self, record):
-        """Format log record as Telegram-friendly message."""
+    def format(self, record, repeats: int = 0):
+        """Format a log record as (rich error report, full_traceback_or_None)."""
+        import html as _html
+
         level_emoji = {
             logging.ERROR: "🔴",
             logging.CRITICAL: "💀",
             logging.WARNING: "🟡",
         }
         emoji = level_emoji.get(record.levelno, "ℹ️")
-        time_str = datetime.now().strftime("%H:%M:%S")
 
-        import html as _html
-        body = (
-            uikit.heading(f"{emoji} {record.levelname}", level=4)
-            + uikit.kv([
-                ("🕐 Time", uikit.code(time_str)),
-                ("🧩 Module", uikit.code(record.name)),
-            ])
-            + "<pre>" + _html.escape(record.getMessage()[:1500]) + "</pre>"
-        )
-        # Include traceback for exceptions
+        msg_text = record.getMessage()
+        exc = record.exc_info[1] if record.exc_info else None
+
+        rows = [
+            ("🕒 When", uikit.code(_utc_now_str())),
+            ("🧩 Module", uikit.code(record.name)),
+        ]
+        handler = _handler_name(msg_text)
+        if handler:
+            rows.append(("🧭 Handler", uikit.code(handler)))
+        loc = _location(record.exc_info)
+        if loc:
+            rows.append(("📍 Location", uikit.code(loc)))
+        if exc is not None:
+            rows.append(("💥 Error", uikit.code(_exc_summary(exc))))
+        else:
+            rows.append(("💬 Message", uikit.code(msg_text[:300])))
+        rows.append(("⏱️ Uptime", uikit.code(_uptime_str())))
+        if repeats:
+            rows.append(
+                ("🔁 Suppressed", uikit.code(f"+{repeats} repeats (10 min window)"))
+            )
+
+        body = uikit.heading(f"{emoji} {record.levelname}", level=4) + uikit.kv(rows)
+
+        file_tb = None
         if record.exc_info and record.exc_info[1]:
-            tb = "".join(traceback.format_exception(*record.exc_info))
-            # Truncate long tracebacks
-            if len(tb) > 1000:
-                tb = tb[:500] + "\n...\n" + tb[-500:]
-            body += "<pre>" + _html.escape(tb) + "</pre>"
-        return uikit.panel("Error report", body, level=3)
+            full_tb = _clean_tb(
+                "".join(traceback.format_exception(*record.exc_info))
+            )
+            body += "<pre>" + _html.escape(_tb_tail(full_tb)) + "</pre>"
+            if len(full_tb) > MAX_TB_CHARS:
+                file_tb = full_tb
+        else:
+            body += "<pre>" + _html.escape(msg_text[:1500]) + "</pre>"
+
+        return uikit.panel("Error report", body, level=3), file_tb
 
 
 # =============================================================================
@@ -123,24 +299,39 @@ class AsyncExceptionHandler:
 
     def handle(self, loop, context):
         """Handle unhandled asyncio exceptions."""
+        import html as _html
+
         exception = context.get("exception")
         message = context.get("message", "Unhandled exception in asyncio task")
 
+        rows = [
+            ("🕒 When", uikit.code(_utc_now_str())),
+            ("💬 Message", uikit.code(str(message)[:300])),
+        ]
+        tb = "No traceback available"
         if exception:
-            tb = "".join(traceback.format_exception(type(exception), exception, exception.__traceback__))
-            if len(tb) > 1500:
-                tb = tb[:750] + "\n...\n" + tb[-750:]
-        else:
-            tb = "No traceback available"
+            rows.append(
+                ("⚠️ Exception", uikit.code(_exc_summary(exception)))
+            )
+            loc = _location(
+                (type(exception), exception, exception.__traceback__)
+            )
+            if loc:
+                rows.append(("📍 Location", uikit.code(loc)))
+            tb = _clean_tb(
+                "".join(
+                    traceback.format_exception(
+                        type(exception), exception, exception.__traceback__
+                    )
+                )
+            )
+            tb = _tb_tail(tb, MAX_ASYNC_TB_CHARS)
+        rows.append(("⏱️ Uptime", uikit.code(_uptime_str())))
 
-        import html as _html
         error_msg = uikit.panel(
             "Unhandled Asyncio Exception",
             uikit.heading("💀 Unhandled Asyncio Exception", level=4)
-            + uikit.kv([
-                ("💬 Message", uikit.code(message)),
-                ("⚠️ Exception", uikit.code(f"{type(exception).__name__}: {exception}")),
-            ])
+            + uikit.kv(rows)
             + "<pre>" + _html.escape(tb) + "</pre>",
             level=3,
         )
@@ -205,8 +396,10 @@ async def send_debug(client, dump_id: int, message: str, level: str = "info"):
         level: "info", "warning", "error"
     """
     emoji = {"info": "ℹ️", "warning": "🟡", "error": "🔴"}.get(level, "ℹ️")
-    time_str = datetime.now().strftime("%H:%M:%S")
-    text = f"{emoji} <b>Debug</b> <code>{time_str}</code>\n\n<code>{message[:3500]}</code>"
+    text = (
+        f"{emoji} <b>Debug</b> <code>{_utc_now_str()}</code>\n\n"
+        f"<code>{message[:3500]}</code>"
+    )
 
     try:
         await client.send_message(

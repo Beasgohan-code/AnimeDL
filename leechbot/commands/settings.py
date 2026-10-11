@@ -64,7 +64,6 @@ async def format_command(client, message):
         f"Choose the quality for video downloads:\n\n"
         f"💡 <b>Tip:</b> Lower quality = faster download &amp; smaller size",
         reply_markup=keyboard,
-        quote=True,
     )
 
 # =============================================================================
@@ -98,6 +97,5 @@ async def speed_command(client, message):
         f"Set maximum download speed to avoid saturating your connection.\n"
         f"This applies to aria2c and YT-DLP downloads.",
         reply_markup=keyboard,
-        quote=True,
     )
 
