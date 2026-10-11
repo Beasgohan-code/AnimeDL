@@ -3,6 +3,7 @@ import re
 import time
 from pyrogram import Client, filters
 from pyrogram.enums import ParseMode, ChatType
+from pyrogram.errors import MessageNotModified
 from pyrogram.types import InlineKeyboardMarkup
 from cantarella.button import Button as InlineKeyboardButton
 
@@ -137,18 +138,25 @@ async def show_episodes_page(client, callback_query, page):
         InlineKeyboardButton("❌ ᴄʟᴏꜱᴇ",         callback_data="adl_cancel")
     ])
 
+    _eps_caption = f"<blockquote>📺 <b>ᴇᴘɪꜱᴏᴅᴇꜱ (ᴘᴀɢᴇ {page+1}):</b>\nꜱᴇʟᴇᴄᴛ ᴀɴ ᴇᴘɪꜱᴏᴅᴇ ᴛᴏ ᴅᴏᴡɴʟᴏᴀᴅ:</blockquote>"
+    _eps_markup = InlineKeyboardMarkup(buttons)
     try:
         await callback_query.edit_message_caption(
-            caption=f"<blockquote>📺 <b>ᴇᴘɪꜱᴏᴅᴇꜱ (ᴘᴀɢᴇ {page+1}):</b>\nꜱᴇʟᴇᴄᴛ ᴀɴ ᴇᴘɪꜱᴏᴅᴇ ᴛᴏ ᴅᴏᴡɴʟᴏᴀᴅ:</blockquote>",
-            reply_markup=InlineKeyboardMarkup(buttons),
+            caption=_eps_caption,
+            reply_markup=_eps_markup,
             parse_mode=ParseMode.HTML
         )
-    except:
-        await callback_query.edit_message_text(
-            f"<blockquote>📺 <b>ᴇᴘɪꜱᴏᴅᴇꜱ (ᴘᴀɢᴇ {page+1}):</b>\nꜱᴇʟᴇᴄᴛ ᴀɴ ᴇᴘɪꜱᴏᴅᴇ ᴛᴏ ᴅᴏᴡɴʟᴏᴀᴅ:</blockquote>",
-            reply_markup=InlineKeyboardMarkup(buttons),
-            parse_mode=ParseMode.HTML
-        )
+    except MessageNotModified:
+        return  # double-tap: content already on screen — done, not an error
+    except Exception:
+        try:
+            await callback_query.edit_message_text(
+                _eps_caption,
+                reply_markup=_eps_markup,
+                parse_mode=ParseMode.HTML
+            )
+        except MessageNotModified:
+            pass  # same message, same content — nothing to do
 
 
 @Client.on_callback_query(filters.regex("^eps_page_"))

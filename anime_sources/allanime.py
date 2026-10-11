@@ -218,13 +218,24 @@ class AllAnimeSource(BaseProvider):
     # ---------------------------------------------------------------- resolve
     def show_name(self, show_id: str) -> str:
         """Display name for a show id (used by cross-source recovery)."""
+        names = self.show_name_variants(show_id)
+        return names[0] if names else ""
+
+    def show_name_variants(self, show_id: str) -> list:
+        """All title variants allanime knows (romaji + english) — v4.20.0.
+        Recovery searches each: the romaji can be an unsearchable short form
+        ('1P') while the english name finds the show on other sources."""
         try:
             data = self._gql({}, SHOW_NAME_GQL.replace("SHOW_ID", show_id))
             show = self._dig(data, "data", "show")
-            name = show.get("name") or show.get("englishName") or ""
-            return name if isinstance(name, str) else str(name)
+            out = []
+            for field in ("name", "englishName"):
+                v = show.get(field)
+                if isinstance(v, str) and v.strip() and v.strip() not in out:
+                    out.append(v.strip())
+            return out
         except Exception:
-            return ""
+            return []
 
     def _cdn_streams(self, show_id: str, ep_num: str, mode: str) -> list:
         """Direct MP4s from the allanime CDN (episodeInfos query)."""
