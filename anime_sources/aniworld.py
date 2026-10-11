@@ -28,7 +28,7 @@ BASE = os.getenv("ANIMEDL_ANIWORLD_BASE", "https://aniworld.to")
 # language preference: English Sub → English Dub → German Sub → German Dub
 _LANG_PRIORITY = ("2", "4", "3", "1")
 # hoster attempt order per language (all covered by hostextract)
-_PROVIDER_ORDER = ("voe", "filemoon", "doodstream", "vidoza")
+_PROVIDER_ORDER = ("voe", "filemoon", "vidmoly", "doodstream", "vidoza")
 
 _EPISODE_LINK_RE = re.compile(r"data-lang-key=[\"'](\d)[\"'][^>]*data-link-target=[\"']([^\"']+)[\"']", re.I)
 _H4_RE = re.compile(r"<h4>\s*([^<]+?)\s*</h4>", re.I)

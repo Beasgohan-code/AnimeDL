@@ -312,6 +312,9 @@ def get_provider(provider_id: str) -> BaseProvider:
     if provider_id == "aniworld":
         from anime_sources.aniworld import AniWorldSource
         return AniWorldSource()
+    if provider_id == "animeworldind":
+        from anime_sources.animeworldind import AnimeWorldIndiaSource
+        return AnimeWorldIndiaSource()
     if provider_id == "animegg":
         from anime_sources.animegg import AnimeGGSource
         return AnimeGGSource()
@@ -323,7 +326,7 @@ def get_provider(provider_id: str) -> BaseProvider:
 
 # Sources available in the /manage source cycle (order matters).
 # Legacy sources ("animetsu", "aniwatch") are handled by the original scrapers.
-SOURCE_CYCLE = ["hianime", "allanime", "animegg", "aniwave", "aniworld", "zangetsu", "gogo", "tokyoinsider", "animepahe", "animetsu", "aniwatch"]
+SOURCE_CYCLE = ["hianime", "allanime", "animegg", "aniwave", "aniworld", "animeworldind", "zangetsu", "gogo", "tokyoinsider", "animepahe", "animetsu", "aniwatch"]
 
 SOURCE_NAMES = {
     "zangetsu": "🌀 Zangetsu",
@@ -336,6 +339,7 @@ SOURCE_NAMES = {
     "animepahe": "🐾 AnimePahe",
     "aniwave": "🌊 AniWave",
     "aniworld": "🌍 AniWorld",
+    "animeworldind": "🇮🇳 AnimeWorld IN",
     "animegg": "🥚 AnimeGG",
     "consumet": "🛰️ Consumet",
     "aniwatchapi": "🛰️ Aniwatch API",
@@ -353,7 +357,7 @@ def is_provider_url(url: str) -> bool:
     u = (url or "").lower()
     return (
         u.startswith(("allanime://", "animepahe://", "consumet://", "aniwatchapi://", "zangetsu://",
-                      "aniwave://", "animegg://", "aniworld://"))
+                      "aniwave://", "animegg://", "aniworld://", "animeworldind://"))
         or "hianime" in u
         or "aniwatchtv" in u
         or "zangetsu" in u
@@ -399,6 +403,8 @@ def provider_id_for_url(url: str) -> str:
         return "aniwave"
     if u.startswith("aniworld://"):
         return "aniworld"
+    if u.startswith("animeworldind://"):
+        return "animeworldind"
     if u.startswith("animegg://"):
         return "animegg"
     if u.startswith("allanime://") or "allanime" in u:

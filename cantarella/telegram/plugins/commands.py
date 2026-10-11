@@ -466,7 +466,7 @@ async def handle_sources(client: Client, message):
         f"🛠 ғɪx ᴀ ᴅᴇᴀᴅ ꜱᴏᴜʀᴄᴇ: ꜱᴇᴛ ᴇɴᴠ ᴏɴ ʀᴇɴᴅᴇʀ\n"
         f"<code>ANIMEDL_HIANIME_BASE=https://hianime.bz</code>\n"
         f"<code>GOGO_BASE=…</code> · <code>ANIMEDL_ANIWAVE_BASE=…</code>\n"
-        f"<code>ANIMEDL_ANIMEGG_BASE=…</code> · <code>ZANGETSU_BASE=…</code>\n"
+        f"<code>ANIMEDL_ANIMEGG_BASE=…</code> · <code>ANIMEDL_AWI_BASE=…</code>\n"
         f"ᴍɪʀʀᴏʀꜱ ᴛʀɪᴇᴅ ғᴏʀ ʜɪᴀɴɪᴍᴇ: {len(HIANIME_BASES)}"
     )
     panel = (

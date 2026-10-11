@@ -90,7 +90,7 @@ def _cross_source_recover(url, progress_queue):
             words = [w for w in re.split(r"[^a-z0-9]+", name.lower()) if w]
             progress_queue.put({"status": f"🔁 ꜱᴏᴜʀᴄᴇ ꜰᴀɪʟᴇᴅ — ꜰɪɴᴅɪɴɢ '{name}' ᴇᴘ {ep_num} ᴇʟꜱᴇᴡʜᴇʀᴇ…"})
             from anime_sources.base import cached_streams as _cs2
-            for src in ("hianime", "animegg", "aniwave", "aniworld", "zangetsu", "gogo"):
+            for src in ("hianime", "animegg", "aniwave", "aniworld", "animeworldind", "zangetsu", "gogo"):
                 try:
                     results = search_provider(src, name)
                 except Exception:
@@ -135,7 +135,7 @@ def _cross_source_recover(url, progress_queue):
         "cross-source recovery: '%s' ep=%s from %s", query, ep_num, u[:60])
     progress_queue.put({"status": f"🔁 ꜱᴏᴜʀᴄᴇ ꜰᴀɪʟᴇᴅ — ꜰɪɴᴅɪɴɢ '{query}' ᴏɴ ᴀɴᴏᴛʜᴇʀ ꜱᴏᴜʀᴄᴇ…"})
     from anime_sources.base import cached_streams as _cs
-    for src in ("hianime", "allanime", "animegg", "aniwave", "aniworld", "zangetsu", "gogo"):
+    for src in ("hianime", "allanime", "animegg", "aniwave", "aniworld", "animeworldind", "zangetsu", "gogo"):
         try:
             results = search_provider(src, query)
             if not results:
@@ -272,6 +272,14 @@ def download_provider_episode(url: str, download_path: Path, progress_queue,
             os.replace(final_path, final_file)
         except Exception:
             final_file = Path(final_path)
+
+        # AniSkip chapters (OP/ED markers for players) — strictly fail-open
+        try:
+            from anime_sources.aniskip import maybe_add_chapters
+            if maybe_add_chapters(str(final_file), title, ep_num):
+                progress_queue.put({"status": "ℹ️ ᴏᴘ/ᴇᴅ ᴄʜᴀᴘᴛᴇʀꜱ ᴀᴅᴅᴇᴅ (ᴀɴɪꜱᴋɪᴘ)"})
+        except Exception:
+            pass
 
         progress_queue.put({
             "finished": True,

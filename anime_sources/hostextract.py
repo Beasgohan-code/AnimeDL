@@ -159,6 +159,8 @@ def resolve_host_embed(url: str, referer: str = None) -> list:
         return resolve_filemoon(url, referer=referer)
     if "vidoza" in host or "videzz" in host:
         return resolve_vidoza(url, referer=referer)
+    if "vidmoly" in host or "molplay" in host:
+        return resolve_vidmoly(url, referer=referer)
     return []
 
 
@@ -167,7 +169,8 @@ def is_fallback_host(url: str) -> bool:
     host = (url or "").split("/")[2].lower() if "://" in (url or "") else ""
     return any(k in host for k in (
         "mp4upload", "streamtape", "streamta.", "voe", "dood", "dsvplay",
-        "d000", "filemoon", "moonplayer", "vidoza", "videzz",
+        "d000", "filemoon", "moonplayer", "vidoza", "videzz", "vidmoly",
+        "molplay",
     ))
 
 
@@ -399,6 +402,29 @@ def resolve_filemoon(url: str, referer: str = None) -> list:
             origin = "/".join(url.split("/")[:3])
             return [{"quality": "auto", "url": src,
                      "headers": {"Referer": origin + "/"}}]
+    except Exception:  # noqa: BLE001
+        pass
+    return []
+
+
+# ============================================================================
+#  Vidmoly — `file: "<url>.m3u8"` inside the embed's script blocks
+#  (port of AniWorld-Downloader vidmoly.py).
+# ============================================================================
+_FM2_FILE_RE = re.compile(r"file\s*:\s*['\"]([^'\"]+?\.m3u8[^'\"]*)['\"]")
+
+
+def resolve_vidmoly(url: str, referer: str = None) -> list:
+    try:
+        html = tls_get(url, headers={
+            "User-Agent": DEFAULT_UA, "Referer": referer or "https://vidmoly.biz/",
+        }).text
+        scripts = "\n".join(
+            s for s in re.findall(r"<script[^>]*>([\s\S]*?)</script>", html, re.I) if s)
+        m = _FM2_FILE_RE.search(scripts) or _FM2_FILE_RE.search(html)
+        if m:
+            return [{"quality": "auto", "url": m.group(1),
+                     "headers": {"Referer": "https://vidmoly.biz/"}}]
     except Exception:  # noqa: BLE001
         pass
     return []
