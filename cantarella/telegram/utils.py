@@ -12,6 +12,7 @@ async def set_bot_commands(client: Client):
         BotCommand("ongoing", "📆 Vɪᴇᴡ ᴛᴏᴅᴀʏ's ᴀɴɪᴍᴇ sᴄʜᴇᴅᴜʟᴇ"),
         BotCommand("autodel", "🕒 Sᴇᴛ ᴀᴜᴛᴏ-ᴅᴇʟᴇᴛᴇ ᴛɪᴍᴇ (Aᴅᴍɪɴ)"),
         BotCommand("sources", "🩺 Cʜᴇᴄᴋ ᴡʜɪᴄʜ ᴀɴɪᴍᴇ ꜱᴏᴜʀᴄᴇꜱ ᴀʀᴇ ᴀʟɪᴠᴇ (Aᴅᴍɪɴ)"),
+        BotCommand("diag", "🔬 Tᴇꜱᴛ ᴛʜᴇ ғᴜʟʟ ᴅᴏᴡɴʟᴏᴀᴅ ᴘɪᴘᴇʟɪɴᴇ (Aᴅᴍɪɴ)"),
         BotCommand("manage", "⚙️ Mᴀɴᴀɢᴇ ʙᴏᴛ sᴇᴛᴛɪɴɢs (Aᴅᴍɪɴ)"),
         BotCommand("stats", "📊 Aɴɪᴍᴇ ʙᴏᴛ sᴛᴀᴛɪsᴛɪᴄs (Aᴅᴍɪɴ)"),
         BotCommand("maplist", "📋 Vɪᴇᴡ ᴀɴɪᴍᴇ ᴍᴀᴘᴘɪɴɢs (Aᴅᴍɪɴ)"),

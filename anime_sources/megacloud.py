@@ -169,23 +169,30 @@ def _keyless_extract(embed_url: str) -> Optional[dict]:
     if not sid_m:
         return None
     sid = sid_m.group(1)
-    try:
+    # host alternates: some edges block .tv, others .blog
+    hosts = ["https://megacloud.tv", "https://megacloud.blog"]
+    last_err = None
+    for host in hosts:
+      try:
+        embed_url = re.sub(r"^https?://megacloud\.(?:tv|blog)", host, embed_url)
         page = _get(embed_url)
         html = page.text if page is not None else ""
         m = re.search(r'([a-zA-Z0-9]{48})|x: "([a-zA-Z0-9]{16})", y: "([a-zA-Z0-9]{16})", z: "([a-zA-Z0-9]{16})"}', html)
         if not m:
-            return None
+            last_err = RuntimeError("client key not on page")
+            continue
         client_key = m.group(1) or "".join(x for x in m.groups()[1:] if x)
 
         from anime_sources.base import http_session
         r = http_session().get(
-            "https://megacloud.tv/embed-2/v3/e-1/getSources",
+            f"{host}/embed-2/v3/e-1/getSources",
             params={"id": sid, "_k": client_key},
             headers={"Referer": embed_url},
             timeout=(6, 15),
         )
         if r.status_code != 200:
-            return None
+            last_err = RuntimeError(f"getSources HTTP {r.status_code}")
+            continue
         data = r.json()
         if isinstance(data.get("sources"), str):
             chars = list(data["sources"])
@@ -218,7 +225,8 @@ def _keyless_extract(embed_url: str) -> Optional[dict]:
                     except Exception:
                         continue
                 if parsed is None:
-                    return None
+                    last_err = RuntimeError("decode failed")
+                    continue
                 # decoded payload may be the bare sources ARRAY or the full
                 # {"sources": […], "tracks": […]} object — accept both
                 if isinstance(parsed, dict):
@@ -229,8 +237,10 @@ def _keyless_extract(embed_url: str) -> Optional[dict]:
                 else:
                     data["sources"] = parsed
         return data if data.get("sources") else None
-    except Exception:
-        return None
+      except Exception as e:
+        last_err = e
+        continue
+    return None
 
 
 def megaplay_fallback(ep_id: str, mode: str = "sub") -> Optional[dict]:

@@ -70,11 +70,16 @@ def _cross_source_recover(url, progress_queue):
     import logging as _log
     from anime_sources.base import SourceError as _SE
     u = (url or "").lower()
-    if not any(k in u for k in ("animetsu", "aniwatch", "animepahe.si/")):
-        return None
+    legacy = any(k in u for k in ("animetsu", "aniwatch", "animepahe.si/"))
     m_slug = re.search(r"/(?:anime|watch)/([a-z0-9-]+)", u)
+    # legacy hosts: slug from the URL. Live providers: fall back to the
+    # resolve error text (the provider names the show in its message)
     if not m_slug:
-        return None
+        if legacy:
+            return None
+        m_slug = re.search(r"'([^']*)' ep", u)
+        if not m_slug:
+            return None
     slug = m_slug.group(1)
     m_ep = re.search(r"episode[_-](\d+)", u) or re.search(r"[?&]ep=([^&/]+)", u)
     ep_num = m_ep.group(1) if m_ep else None
@@ -83,7 +88,7 @@ def _cross_source_recover(url, progress_queue):
     query = " ".join(words[:5])
     _log.getLogger(__name__).info(
         "cross-source recovery: '%s' ep=%s from %s", query, ep_num, u[:60])
-    progress_queue.put({"status": f"🔁 ꜱᴏᴜʀᴄᴇ ᴅᴇᴀᴅ — ꜰɪɴᴅɪɴɢ '{query}' ᴏɴ ᴀ ʟɪᴠᴇ ꜱᴏᴜʀᴄᴇ…"})
+    progress_queue.put({"status": f"🔁 ꜱᴏᴜʀᴄᴇ ꜰᴀɪʟᴇᴅ — ꜰɪɴᴅɪɴɢ '{query}' ᴏɴ ᴀɴᴏᴛʜᴇʀ ꜱᴏᴜʀᴄᴇ…"})
     from anime_sources.base import cached_streams as _cs
     for src in ("hianime", "allanime", "zangetsu", "gogo"):
         try:
@@ -177,10 +182,13 @@ def download_provider_episode(url: str, download_path: Path, progress_queue,
         return re.sub(r'[\\/*?:"<>|]', "", name)
 
     def pick(streams, wanted: str):
+        # strict on a numeric want: the explicit fallback below reports the
+        # substitution to the user (silent best-guess hid quality surprises)
         if wanted.isdigit():
             for s in streams:
                 if str(s.get("quality")) == wanted:
                     return s
+            return None
         return streams[0] if streams else None
 
     qual_str = quality if quality in ("360", "720", "1080") else "auto"
@@ -194,8 +202,12 @@ def download_provider_episode(url: str, download_path: Path, progress_queue,
     ))
 
     stream = pick(resolved.streams, quality if quality.isdigit() else "")
+    if not stream and quality.isdigit() and resolved.streams:
+        # quality fallback: requested variant missing → nearest available
+        stream = resolved.streams[0]
+        progress_queue.put({"status": f"ℹ️ {qual_str}ᴘ ɴᴏᴛ ᴀᴠᴀɪʟᴀʙʟᴇ — ᴜꜱɪɴɢ {stream.get('quality', 'auto')}"})
     if not stream:
-        progress_queue.put({"error": f"No {qual_str} stream available."})
+        progress_queue.put({"error": f"No stream available on this source."})
         return False
 
     save_name = f"{base_name}_{provider_id}"

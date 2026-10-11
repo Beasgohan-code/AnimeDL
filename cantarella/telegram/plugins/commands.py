@@ -335,6 +335,91 @@ async def handle_health_cmd(client: Client, message):
 
 # ─────────────────────────────────────────────
 # ─────────────────────────────────────────────
+# ─────────────────────────────────────────────
+#  /diag — full download-pipeline self-test, live on this server
+# ─────────────────────────────────────────────
+@Client.on_message(filters.private & filters.command("diag") & admin)
+async def handle_diag(client: Client, message):
+    """Runs a REAL mini pipeline: search 'dr stone' on hianime → episode 1 →
+    resolve → check an m3u8 comes back. Reports the EXACT stage that fails
+    on THIS server (search / episode list / resolve / stream host)."""
+    import traceback
+    from anime_sources import search_provider
+    from anime_sources.base import cached_streams
+    steps = []
+    def mark(ok, name, detail=""):
+        steps.append(("✅" if ok else "❌", name, detail))
+
+    status = await message.reply(
+        "<blockquote>🔬 ʀᴜɴɴɪɴɢ ғᴜʟʟ ᴅᴏᴡɴʟᴏᴀᴅ-ᴘɪᴘᴇʟɪɴᴇ ᴅɪᴀɢ… (~30ꜱ)</blockquote>",
+        parse_mode=ParseMode.HTML,
+    )
+
+    # stage 1: search
+    results = []
+    try:
+        results = search_provider("hianime", "dr stone") or []
+        mark(bool(results), "Search (hianime 'dr stone')", f"{len(results)} results")
+    except Exception as e:
+        mark(False, "Search (hianime 'dr stone')", f"{type(e).__name__}: {str(e)[:60]}")
+
+    anime_id, ep_url = None, None
+    if results:
+        # stage 2: episode list
+        try:
+            anime_id = results[0]["id"].split(":", 1)[-1]
+            from anime_sources import list_provider_episodes
+            eps = list_provider_episodes("hianime", anime_id) or []
+            mark(bool(eps), "Episode list", f"{len(eps)} episodes for {anime_id}")
+            if eps:
+                ep_url = eps[0]["url"]
+        except Exception as e:
+            mark(False, "Episode list", f"{type(e).__name__}: {str(e)[:60]}")
+
+    # stage 3: resolve (servers page → embed → stream host)
+    resolved = None
+    if ep_url:
+        try:
+            from anime_sources import get_provider, provider_id_for_url
+            prov = get_provider(provider_id_for_url(ep_url))
+            resolved = cached_streams(f"res:diag:{ep_url}", prov.resolve, ep_url)
+            ok = bool(getattr(resolved, "streams", []))
+            mark(ok, "Resolve (embed → stream URLs)",
+                 f"{len(resolved.streams)} streams" if ok else "no streams")
+        except Exception as e:
+            mark(False, "Resolve (embed → stream URLs)", f"{type(e).__name__}: {str(e)[:60]}")
+
+    # stage 4: downloader binary
+    try:
+        from anime_sources.streamdl import _find_binary
+        b = _find_binary()
+        import os as _os
+        mark(True, "Downloader binary", f"{_os.path.basename(b)} (exec ✓)")
+    except Exception as e:
+        mark(False, "Downloader binary", str(e)[:60])
+
+    # stage 5: key service (megacloud)
+    try:
+        from anime_sources.megacloud import _decryption_key
+        k = _decryption_key()
+        mark(bool(k), "MegaCloud key service", f"key {k[:6]}…" if k else "ALL key repos unreachable")
+    except Exception as e:
+        mark(False, "MegaCloud key service", str(e)[:60])
+
+    body = "\n".join(f"{s} <b>{n}</b> — <i>{d}</i>" if d else f"{s} <b>{n}</b>" for s, n, d in steps)
+    all_ok = all(s == "✅" for s, _, _ in steps)
+    verdict = "🟢 ᴇᴠᴇʀʏᴛʜɪɴɢ ᴡᴏʀᴋꜱ — ᴅᴏᴡɴʟᴏᴀᴅꜱ ꜱʜᴏᴜʟᴅ ꜱᴜᴄᴄᴇᴇᴅ" if all_ok else              "🔴 ꜰɪx ᴛʜᴇ ʀᴇᴅ ʟɪɴᴇ(ꜱ) ᴀʙᴏᴠᴇ — ꜱᴇɴᴅ ᴛʜɪꜱ ᴡʜᴏʟᴇ ᴍᴇꜱꜱᴀɢᴇ ᴛᴏ ꜱᴜᴘᴘᴏʀᴛ"
+    panel = (
+        f"<blockquote>🔬 <b>ᴅᴏᴡɴʟᴏᴀᴅ-ᴘɪᴘᴇʟɪɴᴇ ᴅɪᴀɢ</b> · ᴠ{config.VERSION}</blockquote>\n"
+        f"<blockquote>{body}</blockquote>\n"
+        f"<blockquote>{verdict}</blockquote>"
+    )
+    try:
+        await status.edit_text(panel, parse_mode=ParseMode.HTML)
+    except Exception:
+        await message.reply(panel, parse_mode=ParseMode.HTML)
+
+
 #  /sources — live probe of every anime source
 # ─────────────────────────────────────────────
 @Client.on_message(filters.private & filters.command("sources") & admin)
