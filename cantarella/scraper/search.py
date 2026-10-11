@@ -12,6 +12,14 @@ def search_anime(query, source="aniwatch"):
         from cantarella.scraper.animetsu import AnimetsuScraper
         return AnimetsuScraper().search_anime(query)
 
+    # ── Multi-source engine (hianime / allanime / gogo / animepahe / remote) ──
+    try:
+        from anime_sources import get_provider, search_provider, SOURCE_CYCLE
+        if source in ("hianime", "allanime", "gogo", "animepahe", "consumet", "aniwatchapi"):
+            return search_provider(source, query)
+    except Exception as engine_error:
+        print(f"Multi-source search error: {engine_error}")
+
     search_url = f"{BASE_URL}/search?keyword={query.replace(' ', '+')}"
     try:
         session = c_requests.Session()

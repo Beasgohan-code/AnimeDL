@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 # Version
 # ============================================================================
-VERSION = os.getenv("VERSION", "4.1.0")
+VERSION = os.getenv("VERSION", "4.2.0")
 BUILD_DATE = os.getenv("BUILD_DATE", "2026-10-11")
 BOT_REPO = os.getenv("BOT_REPO", "https://github.com/Beasgohan-code/AnimeDL")
 
@@ -95,6 +95,13 @@ PROGRESS_BAR = os.getenv(
 📦 {current} / {total}</blockquote>
 """,
 )
+
+# ─── Multi-source engine ───
+# GogoAnime domain rotates often — override when it moves
+GOGO_BASE = os.getenv("GOGO_BASE", "https://gogoanime.bid/")
+# Optional self-hosted REST APIs (appear in the /manage source cycle when set)
+ANIMEDL_CONSUMET_URL = os.getenv("ANIMEDL_CONSUMET_URL", "")
+ANIMEDL_ANIWATCH_URL = os.getenv("ANIMEDL_ANIWATCH_URL", "")
 
 # ─── Rotating reply images (comma-separated URLs; empty = plain text) ───
 RESPONSE_IMAGES = [

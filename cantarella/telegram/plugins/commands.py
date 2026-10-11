@@ -15,6 +15,32 @@ from cantarella.telegram.decorators import check_ban, check_fsub
 
 logger = logging.getLogger(__name__)
 
+
+from anime_sources import SOURCE_CYCLE, SOURCE_NAMES
+import os as _os
+
+
+def _source_cycle() -> list:
+    """Sources available in the /manage cycle; remote ones appear when configured."""
+    cycle = list(SOURCE_CYCLE)
+    if _os.getenv("ANIMEDL_CONSUMET_URL"):
+        cycle.append("consumet")
+    if _os.getenv("ANIMEDL_ANIWATCH_URL"):
+        cycle.append("aniwatchapi")
+    return cycle
+
+
+def _next_source(current: str) -> str:
+    cycle = _source_cycle()
+    if current not in cycle:
+        return cycle[0]
+    return cycle[(cycle.index(current) + 1) % len(cycle)]
+
+
+def _source_name(source_id: str) -> str:
+    return SOURCE_NAMES.get(source_id, source_id.upper())
+
+
 async def check_admin(filter, client, message):
     try:
         user_id = message.from_user.id
@@ -47,8 +73,8 @@ async def handle_settings(client: Client, message):
     mapping_toggle_label = "🔄 ᴍᴀᴘᴘɪɴɢ: ꜱɪɴɢʟᴇ" if mapping_batch_mode else "🔄 ᴍᴀᴘᴘɪɴɢ: ʙᴀᴛᴄʜ"
 
     active_source = await db.get_user_setting(0, "active_source", "animetsu")
-    source_display = "🌐 ANIMETSU" if active_source == "animetsu" else "📺 ANIWATCH"
-    source_toggle_label = "🔄 ꜱᴡɪᴛᴄʜ ᴛᴏ ᴀɴɪᴡᴀᴛᴄʜ" if active_source == "animetsu" else "🔄 ꜱᴡɪᴛᴄʜ ᴛᴏ ᴀɴɪᴍᴇᴛꜱᴜ"
+    source_display = _source_name(active_source)
+    source_toggle_label = "🔄 ꜱᴡɪᴛᴄʜ ꜱᴏᴜʀᴄᴇ"
 
     caption = (
         "<blockquote><b>⚙️ ʙᴏᴛ ꜱᴇᴛᴛɪɴɢꜱ</b>\n\n"

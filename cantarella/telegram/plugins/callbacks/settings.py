@@ -4,6 +4,31 @@ from pyrogram.types import InlineKeyboardMarkup
 from cantarella.button import Button as InlineKeyboardButton
 from config import *
 
+from anime_sources import SOURCE_CYCLE, SOURCE_NAMES
+import os as _os
+
+
+def _source_cycle() -> list:
+    """Sources available in the /manage cycle; remote ones appear when configured."""
+    cycle = list(SOURCE_CYCLE)
+    if _os.getenv("ANIMEDL_CONSUMET_URL"):
+        cycle.append("consumet")
+    if _os.getenv("ANIMEDL_ANIWATCH_URL"):
+        cycle.append("aniwatchapi")
+    return cycle
+
+
+def _next_source(current: str) -> str:
+    cycle = _source_cycle()
+    if current not in cycle:
+        return cycle[0]
+    return cycle[(cycle.index(current) + 1) % len(cycle)]
+
+
+def _source_name(source_id: str) -> str:
+    return SOURCE_NAMES.get(source_id, source_id.upper())
+
+
 # ─────────────────────────────────────────────
 #  Toggle ongoing auto-download
 # ─────────────────────────────────────────────
@@ -28,7 +53,7 @@ async def on_toggle_ongoing(client: Client, callback_query):
     mapping_status_icon = "📦 BATCH" if mapping_batch_mode else "📄 SINGLE"
 
     active_source = await db.get_user_setting(0, "active_source", "animetsu")
-    source_display = "🌐 ANIMETSU" if active_source == "animetsu" else "📺 ANIWATCH"
+    source_display = _source_name(active_source)
 
     caption = (
         "<blockquote><b>⚙️ ʙᴏᴛ ꜱᴇᴛᴛɪɴɢꜱ</b>\n\n"
@@ -38,7 +63,7 @@ async def on_toggle_ongoing(client: Client, callback_query):
         "ᴡʜᴇɴ ᴏɴ, ᴛʜᴇ ʙᴏᴛ ᴀᴜᴛᴏᴍᴀᴛɪᴄᴀʟʟʏ ᴄʜᴇᴄᴋꜱ ꜰᴏʀ ɴᴇᴡ ᴀɴɪᴍᴇ ᴇᴘɪꜱᴏᴅᴇꜱ ᴀɴᴅ ᴅᴏᴡɴʟᴏᴀᴅꜱ ᴛʜᴇᴍ.</blockquote>"
     )
     mapping_toggle_label = "🔄 ᴍᴀᴘᴘɪɴɢ: ꜱɪɴɢʟᴇ" if mapping_batch_mode else "🔄 ᴍᴀᴘᴘɪɴɢ: ʙᴀᴛᴄʜ"
-    source_toggle_label = "🔄 ꜱᴡɪᴛᴄʜ ᴛᴏ ᴀɴɪᴡᴀᴛᴄʜ" if active_source == "animetsu" else "🔄 ꜱᴡɪᴛᴄʜ ᴛᴏ ᴀɴɪᴍᴇᴛꜱᴜ"
+    source_toggle_label = "🔄 ꜱᴡɪᴛᴄʜ ꜱᴏᴜʀᴄᴇ"
 
     buttons = InlineKeyboardMarkup([
         [InlineKeyboardButton(toggle_label, callback_data="toggle_ongoing")],
@@ -111,7 +136,7 @@ async def on_toggle_active_source(client: Client, callback_query):
         return await callback_query.answer("❌ You are not authorized to use this.", show_alert=True)
 
     current_source = await db.get_user_setting(0, "active_source", "animetsu")
-    new_source = "aniwatch" if current_source == "animetsu" else "animetsu"
+    new_source = _next_source(current_source)
     await db.set_user_setting(0, "active_source", new_source)
 
     ongoing_enabled = await db.get_user_setting(0, "ongoing_enabled", False)
@@ -122,8 +147,8 @@ async def on_toggle_active_source(client: Client, callback_query):
     mapping_status_icon = "📦 BATCH" if mapping_batch_mode else "📄 SINGLE"
     mapping_toggle_label = "🔄 ᴍᴀᴘᴘɪɴɢ: ꜱɪɴɢʟᴇ" if mapping_batch_mode else "🔄 ᴍᴀᴘᴘɪɴɢ: ʙᴀᴛᴄʜ"
 
-    source_display = "🌐 ANIMETSU" if new_source == "animetsu" else "📺 ANIWATCH"
-    source_toggle_label = "🔄 ꜱᴡɪᴛᴄʜ ᴛᴏ ᴀɴɪᴡᴀᴛᴄʜ" if new_source == "animetsu" else "🔄 ꜱᴡɪᴛᴄʜ ᴛᴏ ᴀɴɪᴍᴇᴛꜱᴜ"
+    source_display = _source_name(new_source)
+    source_toggle_label = "🔄 ꜱᴡɪᴛᴄʜ ꜱᴏᴜʀᴄᴇ"
 
     caption = (
         "<blockquote><b>⚙️ ʙᴏᴛ ꜱᴇᴛᴛɪɴɢꜱ</b>\n\n"

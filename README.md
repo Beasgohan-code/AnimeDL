@@ -8,7 +8,21 @@ AnimeDL merges a full anime search & download engine (search, multi-quality epis
 
 ## ✨ Features
 
-### 🎬 Anime downloader
+### 🎬 Anime downloader — 7 sources
+| Source | Type | Notes |
+|---|---|---|
+| ⚡ **Hianime** (hianime.at) | built-in | sub + dub, subs extracted; Cloudflare bypass via curl-impersonate TLS (ani-cli v5 port) |
+| 🌌 **AllAnime** (api.allanime.day) | built-in | sub + dub, wixmp/fast4speed links, AES-CTR payload decoding (ani-cli v4 port) |
+| 🍉 **GogoAnime** | built-in | AES-extractor for encrypt-ajax streams (animdl port); domain via `GOGO_BASE` |
+| 🐾 **AnimePahe** (animepahe.si) | built-in | Kwik embed + JS packer unpacker (otaku-watcher port) |
+| 🌐 **Animetsu** | built-in | original core |
+| 📺 **AniWatch** (aniwatchtv.to) | built-in | original core |
+| 🛰️ **Consumet / Aniwatch-API** | optional | self-hosted REST APIs — one-line env config, containers in compose profile |
+
+Switch sources in `/manage` → **Switch source**. Search results are tagged with
+their source; episode downloads flow through the same N_m3u8DL-RE + upload
+pipeline with per-provider referers.
+
 - **Search & download** — send an anime name or an episode URL, pick quality, get the file
 - **Multi-quality** — 360p / 720p / 1080p via `N_m3u8DL-RE` + ffmpeg
 - **Batch & season downloads** — grab a whole range of episodes in one tap
@@ -129,6 +143,9 @@ Copy `.env.example` → `.env` and fill in:
 | `TARGET_CHAT_ID` / `MAIN_CHANNEL` / `LOG_CHANNEL` | ➖ | Anime posting channels |
 | `FORMAT` / `CAPTION` | ➖ | Filename & caption templates |
 | `ALLOWED_USERS` | ➖ | Extra leech users (default: owner only) |
+| `GOGO_BASE` | ➖ | GogoAnime domain override (rotates often) |
+| `ANIMEDL_CONSUMET_URL` | ➖ | Self-hosted Consumet API → adds the source |
+| `ANIMEDL_ANIWATCH_URL` | ➖ | Self-hosted Aniwatch API → adds the source |
 | `DEFAULT_UPLOAD_MODE` | ➖ | `media` or `document` |
 
 All variables are documented inline in `.env.example`.

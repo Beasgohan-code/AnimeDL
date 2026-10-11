@@ -21,5 +21,21 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # ── Optional self-hosted anime REST APIs (profile: remote-sources) ──
+  # Enable with:  docker compose --profile remote-sources up -d
+  # Then set ANIMEDL_CONSUMET_URL=http://consumet:4000 and
+  #          ANIMEDL_ANIWATCH_URL=http://aniwatch-api:3000  in .env
+  consumet:
+    image: riimuru/consumet-api:latest
+    container_name: consumet
+    profiles: ["remote-sources"]
+    restart: unless-stopped
+
+  aniwatch-api:
+    image: ghoshritesh12/aniwatch-api:latest
+    container_name: aniwatch-api
+    profiles: ["remote-sources"]
+    restart: unless-stopped
+
 volumes:
   animedl_data:

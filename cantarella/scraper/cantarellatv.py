@@ -273,6 +273,20 @@ class cantarellatvDownloader:
             scraper = AnimetsuScraper(download_path=self.download_path, progress_queue=self.progress_queue)
             return scraper.download_episode(url, quality, name_override, season_override, ep_num_override)
 
+        # ── Multi-source engine (hianime / allanime / gogo / animepahe / remote) ──
+        from anime_sources import is_provider_url, download_provider_episode
+        if is_provider_url(url):
+            download_provider_episode(
+                url,
+                download_path=self.download_path,
+                progress_queue=self.progress_queue,
+                quality=quality,
+                name_override=name_override,
+                season_override=season_override,
+                ep_num_override=ep_num_override,
+            )
+            return True
+
         ep_id = self.get_episode_id(url)
         if not ep_id:
             self.progress_queue.put({'error': 'Could not find episode ID.'})

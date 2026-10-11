@@ -22,6 +22,30 @@ async def on_anime_select(client: Client, callback_query):
 
     anime_id = callback_query.data.split("_")[1]
 
+    # ── Multi-source engine: namespaced ids look like "hianime:slug" ──
+    if ":" in anime_id:
+        provider_id, provider_anime_id = anime_id.split(":", 1)
+        try:
+            from anime_sources import list_provider_episodes, get_provider
+            provider = get_provider(provider_id)
+        except Exception:
+            await callback_query.answer("❌ Unknown source.", show_alert=True)
+            return
+        url = f"{provider_id}:{provider_anime_id}"
+        entries = await client.loop.run_in_executor(
+            None, list_provider_episodes, provider_id, provider_anime_id
+        )
+        if not entries:
+            await callback_query.answer("❌ ɴᴏ ᴇᴘɪꜱᴏᴅᴇꜱ ғᴏᴜɴᴅ.")
+            return
+        user_episodes[callback_query.from_user.id] = {
+            "title": entries[0].get("title", provider.name),
+            "episodes": entries,
+            "url": url,
+            "page": 0,
+        }
+        return await show_episodes_page(client, callback_query, 0)
+
     active_source = await db.get_user_setting(0, "active_source", "animetsu")
     if active_source == "animetsu":
         url = f"https://animetsu.live/anime/{anime_id}"

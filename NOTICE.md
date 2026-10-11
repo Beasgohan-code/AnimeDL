@@ -23,7 +23,20 @@ MIT License.
 [N_m3u8DL-RE](https://github.com/nilaoda/N_m3u8DL-RE) by nilaoda, bundled for
 deployment convenience. All rights remain with its original authors.
 
-## 4. Rich UI layer
+## 4. Multi-source anime engine (`anime_sources/`)
+
+Source logic ported from these actively-maintained projects:
+
+| Source | Ported from | License |
+|---|---|---|
+| `hianime.py` (hianime.at) | [pystardust/ani-cli](https://github.com/pystardust/ani-cli) v5.1.5 | GPL-3.0 |
+| `allanime.py` (api.allanime.day) | [pystardust/ani-cli](https://github.com/pystardust/ani-cli) v4.13.0 | GPL-3.0 |
+| `gogo.py` (GogoAnime) | [justfoolingaround/animdl](https://github.com/justfoolingaround/animdl) | GPL-3.0 |
+| `animepahe.py` (animepahe.si) | [GDjkhp/otaku-watcher-contrib](https://github.com/GDjkhp/otaku-watcher-contrib) | WTFPL — see `LICENSES/otaku-watcher-contrib-WTFPL` |
+
+The GPL-3.0 ports inherit this project's GPL-3.0 license (see `LICENSE`).
+
+## 5. Rich UI layer
 
 `uikit.py` is built on [richgram](https://github.com/Badmunda05/richgram) by
 **Bad Munda**, MIT License — installed from PyPI as a dependency (not bundled);

@@ -23,8 +23,10 @@ async def handle_url(client: Client, message):
         return await message.reply("<blockquote>❌ <b>ᴏɴʟʏ ᴀᴜᴛʜᴏʀɪᴢᴇᴅ ᴀᴅᴍɪɴɪꜱᴛʀᴀᴛᴏʀꜱ ᴄᴀɴ ꜱᴇᴀʀᴄʜ ᴏʀ ᴅᴏᴡɴʟᴏᴀᴅ ᴀɴɪᴍᴇ.</b>\n\nᴄᴏɴᴛᴀᴄᴛ ᴛʜᴇ ᴏᴡɴᴇʀ ɪғ ʏᴏᴜ ᴛʜɪɴᴋ ᴛʜɪꜱ ɪꜱ ᴀ ᴍɪꜱᴛᴀᴋᴇ.</blockquote>", parse_mode=ParseMode.HTML)
 
     is_animetsu = "animetsu.live" in url.lower() or "animetsu.bz" in url.lower()
+    from anime_sources import is_provider_url
+    is_provider_link = is_provider_url(url)
 
-    if "hianime" not in url.lower() and "cantarella" not in url.lower() and "aniwatchtv.to" not in url.lower() and not is_animetsu:
+    if "hianime" not in url.lower() and "cantarella" not in url.lower() and "aniwatchtv.to" not in url.lower() and not is_animetsu and not is_provider_link:
         # Treat as a search query
         status_msg = await client.send_photo(
             message.chat.id,
@@ -58,7 +60,9 @@ async def handle_url(client: Client, message):
         )
         return
 
-    is_episode = "ep=" in url or "episode-" in url or (is_animetsu and "/watch/" in url)
+    is_episode = "ep=" in url or "episode-" in url or (is_animetsu and "/watch/" in url) or (
+        is_provider_link and ("allanime://" in url.lower() or "://" in url)
+    )
 
     if is_episode:
         from cantarella.telegram.pages import post_to_main_channel
