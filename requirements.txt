@@ -1,0 +1,48 @@
+# ============================================================================
+#  AnimeDL — Python dependencies
+#  (anime downloader core + leech engine, single process)
+# ============================================================================
+
+# ── Core framework ──
+kurigram>=2.2.24
+tgcrypto>=1.2.5
+
+# ── Configuration ──
+python-dotenv>=1.2.0
+
+# ── Anime downloader core ──
+requests>=2.32.0
+pycryptodome>=3.20.0
+beautifulsoup4>=4.12.3
+motor>=3.6.0
+guessit>=3.8.0
+
+# ── Leech engine ──
+yt-dlp>=2026.7.4
+bgutil-ytdlp-pot-provider>=1.3.1
+gallery-dl>=1.32.8
+curl_cffi>=0.16.0
+aiohttp>=3.14.3
+feedparser>=6.0.12
+
+# ── Google Drive mirror (optional feature) ──
+google-api-python-client>=2.198.0
+google-auth-httplib2>=0.4.0
+google-auth-oauthlib>=1.4.0
+
+# ── Video / image processing ──
+moviepy>=2.2.1
+Pillow>=9.2.0,<12.0
+
+natsort>=8.4.0
+pytz>=2024.1
+
+# ── System monitoring ──
+psutil>=7.2.2
+GPUtil>=1.4.0
+
+# NOTE: ffmpeg, aria2 and N_m3u8DL-RE are SYSTEM dependencies:
+#   • Debian/Ubuntu:  sudo apt install ffmpeg aria2 p7zip-full unrar-free unzip
+#   • Docker:         handled by the Dockerfile
+#   • N_m3u8DL-RE:    bundled in binary/ (Linux x64) — run scripts/fetch_binary.py
+#                     to fetch builds for other platforms.
