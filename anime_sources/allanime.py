@@ -11,6 +11,7 @@
 # ============================================================================
 
 import base64
+import logging
 import hashlib
 import json
 import re
@@ -25,7 +26,8 @@ from anime_sources.base import (
 
 API = "https://api.allanime.day/api"
 SITE = "https://allanime.day"
-REFERER = "https://allmanga.to"
+EMBED_BASE = "https://embed.ssbcontent.site"   # 2026-rotation: provider JSONs live here
+REFERER = "https://allanime.to"                # ani-cli 71zenith: curl -e allanime.to
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0")
 SECRET = "Xot36i3lK3:v1"                      # ani-cli v4.13 key seed
 AES_KEY = hashlib.sha256(SECRET.encode()).digest()
@@ -69,17 +71,18 @@ def _hex_decode(encoded: str) -> str:
 
 
 def _decode_url(raw: str) -> str:
-    """CURRENT (2026) allanime path encodings, from a live API mirror:
-      '--<hex>'  -> bytes.fromhex(...) XOR 0x38 (56)
-      'ap/<hex>' -> plain hex
-    The old ani-cli v4.13 table remains as a fallback for legacy paths."""
+    """allanime path encodings — CURRENT (2026-10) rotation first, from
+    ani-cli 71zenith: sourceUrls now start with '##' and the hex bytes are
+    XOR-48 ('--' + XOR-56 was the previous rotation; kept for tolerance).
+    'ap/<hex>' -> plain hex (older live-mirror scheme)."""
     if not raw:
         return raw
-    if raw.startswith("--"):
-        try:
-            return bytes(b ^ 56 for b in bytes.fromhex(raw[2:])).decode()
-        except Exception:
-            pass
+    for marker, key in (("##", 48), ("--", 56)):
+        if raw.startswith(marker):
+            try:
+                return bytes(b ^ key for b in bytes.fromhex(raw[len(marker):])).decode()
+            except Exception:
+                pass
     if raw.startswith("ap/"):
         try:
             return bytes.fromhex(raw[3:]).decode()
@@ -272,8 +275,10 @@ class AllAnimeSource(BaseProvider):
         raw_urls = episode.get("sourceUrls") or []
         if not isinstance(raw_urls, list):
             raw_urls = []
+        logging.getLogger(__name__).info(
+            "allanime: EP%s of %s → %d sourceUrl(s)", ep_num, show_id, len(raw_urls))
 
-        # Each sourceUrl looks like "--<provider>-<hex-encoded path>"
+        # sourceUrl entries are marker-prefixed hex-encoded provider paths
         provider_paths = []
         for entry in raw_urls:
             if isinstance(entry, dict):
@@ -286,7 +291,7 @@ class AllAnimeSource(BaseProvider):
             if "tobeparsed" in json.dumps(entry):
                 # AES-CTR encrypted payload
                 surl = self._decode_tobeparsed(str(surl))
-            surl = _decode_url(surl)   # 2026 scheme: XOR-56 / plain hex
+            surl = _decode_url(surl)   # '##' XOR-48 (current) / '--' XOR-56 legacy
             provider_paths.append((sname, surl))
 
         streams = []
@@ -294,18 +299,26 @@ class AllAnimeSource(BaseProvider):
         for sname, surl in provider_paths:
             try:
                 got = self._links_from_source(surl)
+                logging.getLogger(__name__).info(
+                    "allanime: provider %s → %d stream(s)", sname or "?", len(got))
                 for s in got:
                     seen_referers.setdefault(s.get("headers", {}).get("Referer"), True)
                 streams.extend(got)
             except Exception as e:
+                logging.getLogger(__name__).info(
+                    "allanime: provider %s failed: %s", sname or "?", e)
                 continue
 
         if not streams:
             # ── Direct-CDN fallback (2026 scheme): episodeInfos exposes MP4s
             # on allanimenews.com independently of the provider embeds ──
             streams = self._cdn_streams(show_id, ep_num, mode)
+            logging.getLogger(__name__).info(
+                "allanime: cdn fallback → %d stream(s)", len(streams))
         if not streams:
-            raise SourceError("AllAnime: no playable links for this episode")
+            tried = ", ".join(n or "?" for n, _ in provider_paths) or "none listed"
+            raise SourceError(
+                f"AllAnime: no playable links for this episode (providers tried: {tried})")
 
         def _q(s):
             try:
@@ -342,10 +355,11 @@ class AllAnimeSource(BaseProvider):
     # ------------------------------------------------------------------ links
     def _links_from_source(self, surl: str) -> list:
         """Fetch the provider payload and produce stream dicts."""
-        # strip the leading "--" marker and hex-decode the provider path
+        # decode if the caller handed us a still-encoded path ('##' is the
+        # 2026-10 rotation, '--' the previous one)
         path = surl
-        if path.startswith("--"):
-            path = path[2:]
+        if path.startswith(("##", "--")):
+            path = _decode_url(path)
         if not path.startswith(("http", "/")):
             path = _hex_decode(path)
         path = path.replace("/clock", "/clock.json")
@@ -357,7 +371,22 @@ class AllAnimeSource(BaseProvider):
                             "headers": {"Referer": REFERER}})
             return streams
 
-        body = self._site_get(path)
+        # 2026-rotation (ani-cli 71zenith): provider payloads are served from
+        # embed.ssbcontent.site; allanime.day stays as a fallback in case the
+        # old host ever serves again.
+        if path.startswith("http"):
+            body = self._site_get(path)
+        else:
+            last_err = None
+            body = None
+            for base in (EMBED_BASE, SITE):
+                try:
+                    body = self._site_get(f"{base}{path}")
+                    break
+                except Exception as e:  # noqa: BLE001
+                    last_err = e
+            if body is None:
+                raise last_err or SourceError("AllAnime: provider fetch failed")
         # wixmp repackager → direct mp4 renditions
         if "repackager.wixmp.com" in body:
             links = re.findall(r'"link":"([^"]*)".*?"resolutionStr":"([^"]*)"', body)

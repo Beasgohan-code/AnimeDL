@@ -98,29 +98,41 @@ def _cross_source_recover(url, progress_queue, name_hint=None):
             if "?" in ep_num:  # schemes that carry query data (aniwave ids=…)
                 ep_num = ep_num.split("?", 1)[0]
             words = [w for w in re.split(r"[^a-z0-9]+", name.lower()) if w]
+            _log.getLogger(__name__).info(
+                "recovery(id): name='%s' ep=%s", name, ep_num)
             progress_queue.put({"status": f"🔁 ꜱᴏᴜʀᴄᴇ ꜰᴀɪʟᴇᴅ — ꜰɪɴᴅɪɴɢ '{name}' ᴇᴘ {ep_num} ᴇʟꜱᴇᴡʜᴇʀᴇ…"})
             from anime_sources.base import cached_streams as _cs2
             for src in ("hianime", "animegg", "aniwave", "aniworld", "animeworldind", "zangetsu", "gogo"):
                 try:
                     results = search_provider(src, name)
-                except Exception:
+                except Exception as _se:
+                    _log.getLogger(__name__).info(
+                        "recovery(id): %s search failed: %s", src, _se)
                     continue
                 if not results:
+                    _log.getLogger(__name__).info(
+                        "recovery(id): %s → 0 results", src)
                     continue
                 def _score(r, words=words):
                     rid = str(r.get("id", "")).lower()
                     return sum(1 for w in words if w in rid)
                 best = max(results, key=_score)
                 if _score(best) == 0:
+                    _log.getLogger(__name__).info(
+                        "recovery(id): %s → no title match in %d results", src, len(results))
                     continue
                 prov = get_provider(src)
                 anime_id = best["id"].split(":", 1)[-1]
                 try:
                     eps = prov.episodes(anime_id)
-                except Exception:
+                except Exception as _ee:
+                    _log.getLogger(__name__).info(
+                        "recovery(id): %s episodes failed: %s", src, _ee)
                     continue
                 ep = next((e for e in eps if str(e.number) == str(ep_num)), None)
                 if ep is None:
+                    _log.getLogger(__name__).info(
+                        "recovery(id): %s has %d eps, #%s missing", src, len(eps), ep_num)
                     continue
                 resolved = _cs2(f"res:{src}:{ep.url}", prov.resolve, ep.url)
                 if resolved and getattr(resolved, "streams", []):
@@ -149,6 +161,7 @@ def _cross_source_recover(url, progress_queue, name_hint=None):
         try:
             results = search_provider(src, query)
             if not results:
+                _log.getLogger(__name__).info("recovery: %s → 0 results", src)
                 continue
             # best title match on the slug words
             def _score(r):
@@ -156,6 +169,8 @@ def _cross_source_recover(url, progress_queue, name_hint=None):
                 return sum(1 for w in words if w in rid)
             best = max(results, key=_score)
             if _score(best) == 0:
+                _log.getLogger(__name__).info(
+                    "recovery: %s → no title match in %d results", src, len(results))
                 continue
             prov = get_provider(src)
             anime_id = best["id"].split(":", 1)[-1]
