@@ -170,10 +170,10 @@ class GogoSource(BaseProvider):
 
         streams = []
         first_err = None
+        from anime_sources.hostextract import is_fallback_host
         for embed_url in embeds[:3]:
             try:
-                if "mp4upload" in embed_url or "streamtape" in embed_url \
-                        or "streamta." in embed_url:
+                if is_fallback_host(embed_url):
                     from anime_sources.hostextract import resolve_host_embed
                     got = resolve_host_embed(embed_url, referer=url)
                 else:

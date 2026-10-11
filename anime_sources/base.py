@@ -305,6 +305,9 @@ def get_provider(provider_id: str) -> BaseProvider:
     if provider_id == "aniwave":
         from anime_sources.kaiwave import KaiWaveSource
         return KaiWaveSource()
+    if provider_id == "aniworld":
+        from anime_sources.aniworld import AniWorldSource
+        return AniWorldSource()
     if provider_id == "animegg":
         from anime_sources.animegg import AnimeGGSource
         return AnimeGGSource()
@@ -316,7 +319,7 @@ def get_provider(provider_id: str) -> BaseProvider:
 
 # Sources available in the /manage source cycle (order matters).
 # Legacy sources ("animetsu", "aniwatch") are handled by the original scrapers.
-SOURCE_CYCLE = ["hianime", "allanime", "animegg", "aniwave", "zangetsu", "gogo", "tokyoinsider", "animepahe", "animetsu", "aniwatch"]
+SOURCE_CYCLE = ["hianime", "allanime", "animegg", "aniwave", "aniworld", "zangetsu", "gogo", "tokyoinsider", "animepahe", "animetsu", "aniwatch"]
 
 SOURCE_NAMES = {
     "zangetsu": "🌀 Zangetsu",
@@ -328,6 +331,7 @@ SOURCE_NAMES = {
     "gogo": "🍉 GogoAnime",
     "animepahe": "🐾 AnimePahe",
     "aniwave": "🌊 AniWave",
+    "aniworld": "🌍 AniWorld",
     "animegg": "🥚 AnimeGG",
     "consumet": "🛰️ Consumet",
     "aniwatchapi": "🛰️ Aniwatch API",
@@ -345,7 +349,7 @@ def is_provider_url(url: str) -> bool:
     u = (url or "").lower()
     return (
         u.startswith(("allanime://", "animepahe://", "consumet://", "aniwatchapi://", "zangetsu://",
-                      "aniwave://", "animegg://"))
+                      "aniwave://", "animegg://", "aniworld://"))
         or "hianime" in u
         or "aniwatchtv" in u
         or "zangetsu" in u
@@ -375,10 +379,11 @@ def next_episode_url(url: str):
             return url[:m.start(2)] + str(int(float(m.group(2))) + 1)
         except ValueError:
             return None
-    m = re.search(r"-episode-([0-9.]+)$", url)
+    m = re.search(r"[/]episode-([0-9.]+)$", url) or re.search(r"([a-z0-9])-episode-([0-9.]+)$", url)
     if m:
         try:
-            return url[:m.start(1)] + str(int(float(m.group(1))) + 1)
+            grp = 1 if m.group(0).startswith("/") else 2
+            return url[:m.start(grp)] + str(int(float(m.group(grp))) + 1)
         except ValueError:
             return None
     return None
@@ -388,6 +393,8 @@ def provider_id_for_url(url: str) -> str:
     u = (url or "").lower()
     if u.startswith("aniwave://"):
         return "aniwave"
+    if u.startswith("aniworld://"):
+        return "aniworld"
     if u.startswith("animegg://"):
         return "animegg"
     if u.startswith("allanime://") or "allanime" in u:
