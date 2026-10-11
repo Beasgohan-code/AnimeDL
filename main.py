@@ -14,6 +14,7 @@
 import os
 import sys
 import asyncio
+from pyrogram.enums import ParseMode  # noqa: E402
 import logging
 
 # ---------------------------------------------------------------------------
@@ -165,6 +166,23 @@ async def _resolve_peer(peer_id, label: str):
 # ---------------------------------------------------------------------------
 # Startup
 # ---------------------------------------------------------------------------
+async def _announce(text: str):
+    """Post a lifecycle event (start/stop) to LOG_CHANNEL. Non-fatal."""
+    if not config.LOG_CHANNEL:
+        return
+    try:
+        target = int(config.LOG_CHANNEL)
+    except (TypeError, ValueError):
+        return
+    try:
+        await asyncio.wait_for(
+            app.send_message(target, text, parse_mode=ParseMode.HTML),
+            timeout=8,
+        )
+    except Exception as e:
+        logger.debug("lifecycle announce failed: %s", e)
+
+
 async def run():
     await start_health_server()
     await app.start()
@@ -234,6 +252,14 @@ async def run():
     reliability.start(app)
 
     logger.info("🚀 AnimeDL v%s fully started", config.VERSION)
+
+    # Lifecycle → Telegram log channel (visible on the phone, not just Render)
+    _dash = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
+    await _announce(
+        f"<blockquote>🟢 <b>ʙᴏᴛ ᴏɴʟɪɴᴇ</b> — ᴠ{config.VERSION}</blockquote>\n"
+        f"<blockquote>⏱ ᴜᴘᴛɪᴍᴇ ᴄʟᴏᴄᴋ ꜱᴛᴀʀᴛᴇᴅ · 💓 ᴋᴇᴇᴘ-ᴀʟɪᴠᴇ ᴀᴄᴛɪᴠᴇ</blockquote>"
+        + (f"\n<blockquote>📊 <a href=\"{_dash}/dashboard\">ᴅᴀꜱʜʙᴏᴀʀᴅ</a></blockquote>" if _dash else "")
+    )
     import pyrogram
     await pyrogram.idle()
 
@@ -258,6 +284,10 @@ async def run():
         pass
     _up = int((datetime.utcnow() - START_TIME).total_seconds()) // 60
     logger.warning("🛑 Stop signal received (uptime %dm) — draining…", _up)
+    await _announce(
+        f"<blockquote>🛑 <b>ʙᴏᴛ ꜱᴛᴏᴘᴘᴇᴅ</b> — ᴠ{config.VERSION}</blockquote>\n"
+        f"<blockquote>⏱ ᴜᴘᴛɪᴍᴇ: {_up}ᴍ · ʀᴇꜱᴛᴀʀᴛɪɴɢ/ꜱʟᴇᴇᴘɪɴɢ…</blockquote>"
+    )
     await app.stop()
 
 
