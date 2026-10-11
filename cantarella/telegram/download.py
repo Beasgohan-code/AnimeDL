@@ -118,6 +118,14 @@ async def _handle_download(client: Client, message, url, status_msg, is_playlist
                 await client.edit_message_text(progress_chat_id, status_msg.id, f"<blockquote>⏳ **ᴡᴀɪᴛɪɴɢ ɪɴ ǫᴜᴇᴜᴇ...**\nᴀɴɪᴍᴇ: {name_override or url}\nǫᴜᴀʟɪᴛʏ: {quality}</blockquote>", parse_mode=ParseMode.HTML)
             except Exception:
                 pass
+        # user-side visibility too — they were left staring at "preparing…"
+        try:
+            await status_msg.edit_text(
+                "<blockquote>⏳ <b>ᴡᴀɪᴛɪɴɢ ɪɴ ǫᴜᴇᴜᴇ...</b> (ᴀɴᴏᴛʜᴇʀ ᴅᴏᴡɴʟᴏᴀᴅ ɪꜱ ʀᴜɴɴɪɴɢ)</blockquote>",
+                parse_mode=ParseMode.HTML
+            )
+        except Exception:
+            pass
 
     async with download_semaphore:
         if progress_chat_id and hasattr(status_msg, "id"):

@@ -265,6 +265,14 @@ class cantarellatvDownloader:
             except Exception as e:
                 print(f"Download error on attempt {i+1}: {e}")
             time.sleep(5)
+        # CRITICAL: returning False silently left the user's chat stuck on
+        # "preparing download..." forever — the monitor never learns the
+        # thread died. Always report the failure through the queue.
+        self.progress_queue.put({
+            "error": "Download failed after 3 attempts — the source is "
+                     "unreachable or returned no streams. Try another "
+                     "quality, or switch source in /settings."
+        })
         return False
 
     def _download_single_episode(self, url, quality="auto", name_override=None, season_override=None, ep_num_override=None):

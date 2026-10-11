@@ -207,6 +207,17 @@ async def on_download_quality(client: Client, callback_query):
             else:
                 quality_map[quality] = msg.id
         await post_to_main_channel(client, ep_url, uploaded_msgs, quality_map)
+    else:
+        # silent-death fix: without this the user's "preparing download…"
+        # message sat forever on total failure
+        try:
+            await status_msg.edit_text(
+                "<blockquote>❌ <b>ᴅᴏᴡɴʟᴏᴀᴅ ꜰᴀɪʟᴇᴅ.</b>\n"
+                "💡 ᴛʀʏ ᴀɴᴏᴛʜᴇʀ ǫᴜᴀʟɪᴛʏ/ꜱᴏᴜʀᴄᴇ ( /ꜱᴇᴛᴛɪɴɢꜱ ) ᴏʀ ʀᴇᴛʀʏ ɪɴ ᴀ ᴍɪɴᴜᴛᴇ.</blockquote>",
+                parse_mode=ParseMode.HTML
+            )
+        except Exception:
+            pass
 
     # ── Continue-watching: record for /history ──
     try:

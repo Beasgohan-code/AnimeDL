@@ -15,6 +15,8 @@ import os
 import re
 import shutil
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -87,8 +89,29 @@ def download_stream(stream_url: str, headers: dict, task_dir: Path, save_name: s
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="ignore"
     )
+
+    # Stall watchdog: a hung stream (dead CDN, stuck handshake) used to sit
+    # forever holding one of the few global download slots, so every new
+    # tap queued invisibly behind zombies. No output for 5 min -> kill it;
+    # the non-zero exit then routes to the retry/fallback path.
+    last_line = [time.time()]
+    STALE_AFTER = 300
+
+    def _stall_watchdog():
+        while proc.poll() is None:
+            if time.time() - last_line[0] > STALE_AFTER:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+                return
+            time.sleep(10)
+
+    threading.Thread(target=_stall_watchdog, daemon=True).start()
+
     for line in proc.stdout or []:
         line = line.strip()
+        last_line[0] = time.time()
         m = re.search(r"(\d+(?:\.\d+)?)%", line)
         if m:
             m_size = re.search(r"([\d.]+)\s*([KMG]?B)\s*/\s*([\d.]+)\s*([KMG]?B)", line)
