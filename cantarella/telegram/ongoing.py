@@ -402,24 +402,38 @@ async def check_mapped_anime(client: Client, chat_id: int):
     from anime_sources import search_provider, get_provider
     from anime_sources.base import SOURCE_CYCLE
 
-    active_source = await db.get_user_setting(0, "active_source", "hianime")
+    try:
+        active_source = await db.get_user_setting(0, "active_source", "hianime")
+    except Exception:
+        active_source = "hianime"   # DB blip → sane default, cycle continues
     order = [s for s in ([active_source] + SOURCE_CYCLE)
              if s not in ("animetsu", "aniwatch")]  # legacy sites: DNS-dead
     seen = set()
     order = [s for s in order if not (s in seen or seen.add(s))]
+    dead_sources = set()  # circuit breaker: connection-dead for one mapping = skip for the cycle
 
     for doc in mappings:
         channel_id = doc.get("_id")
         for name in doc.get("anime_names", []) or []:
             found = None
+            suspects = []  # returned nothing; may be dead — verdict when a later source hits
             for src in order:
+                if src in dead_sources:
+                    continue
                 try:
                     res = await asyncio.to_thread(search_provider, src, name)
                 except Exception:
                     res = []
                 if res:
                     found = res[0]
+                    if suspects:
+                        dead_sources.update(suspects)
+                        print(
+                            f"Mapped watcher: {', '.join(suspects)} returned nothing while "
+                            f"{src} served '{name}' — benching them for this cycle"
+                        )
                     break
+                suspects.append(src)
             if not found:
                 print(f"Mapped watcher: no healthy source answered for '{name}'")
                 continue
@@ -516,10 +530,19 @@ async def ongoing_task(client: Client):
     while True:
         ongoing_enabled = await db.get_user_setting(0, "ongoing_enabled", False)
         if ongoing_enabled:
+            # The legacy 'recently updated' site feeds only exist for the
+            # two site scrapers. With a provider source active they would
+            # just hammer dead/TLS-blocked domains every cycle — skip them
+            # and let the mapped-anime watcher do the work.
             try:
-                await check_and_download_ongoing(client, target_chat_id)
-            except Exception as e:
-                print(f"Error in ongoing task loop: {e}")
+                src = await db.get_user_setting(0, "active_source", "animetsu")
+            except Exception:
+                src = "animetsu"
+            if src in ("animetsu", "aniwatch"):
+                try:
+                    await check_and_download_ongoing(client, target_chat_id)
+                except Exception as e:
+                    print(f"Error in ongoing task loop: {e}")
             # Provider-based watcher — keeps working even when both
             # legacy site feeds are down (dead DNS / TLS blocks).
             try:
