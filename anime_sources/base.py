@@ -3,9 +3,12 @@
 # ============================================================================
 #  Providers ported from actively-maintained open-source scrapers:
 #    • hianime    — hianime.at        (port of pystardust/ani-cli v5.1.5, GPL-3)
-#    • allanime   — api.allanime.day  (port of pystardust/ani-cli v4.13, GPL-3)
-#    • gogo       — GogoAnime         (port of justfoolingaround/animdl, GPL-3)
-#    • animepahe  — animepahe.si      (port of GDjkhp/otaku-watcher-contrib, WTFPL)
+#    • allanime   — api.allanime.day  (2026 scheme, taseen32138/allanime-api)
+#    • aniwave    — animewave.to family (port of Yuzono Anikoto/AniWave
+#                                       extractors via zangetsu-sources, Apache-2.0)
+#    • animegg    — animegg.org       (port of walterwhite-69/Anivexa-API)
+#    • gogo       — GogoAnime         (animdl extractor; 2026 fleet anitaku.pe)
+#    • animepahe  — animepahe.com     (Caylaunpredictable245/AnimePahe kwik flow)
 #    • remote     — self-hosted REST APIs (Consumet / Aniwatch-API), env-configured
 #
 #  All providers speak the same tiny interface so the Telegram layer can
@@ -209,6 +212,12 @@ def get_provider(provider_id: str) -> BaseProvider:
     if provider_id == "animepahe":
         from anime_sources.animepahe import AnimePaheSource
         return AnimePaheSource()
+    if provider_id == "aniwave":
+        from anime_sources.kaiwave import KaiWaveSource
+        return KaiWaveSource()
+    if provider_id == "animegg":
+        from anime_sources.animegg import AnimeGGSource
+        return AnimeGGSource()
     if provider_id in ("consumet", "aniwatchapi"):
         from anime_sources.remote import RemoteSource
         return RemoteSource(provider_id)
@@ -217,7 +226,7 @@ def get_provider(provider_id: str) -> BaseProvider:
 
 # Sources available in the /manage source cycle (order matters).
 # Legacy sources ("animetsu", "aniwatch") are handled by the original scrapers.
-SOURCE_CYCLE = ["hianime", "zangetsu", "allanime", "gogo", "tokyoinsider", "animepahe", "animetsu", "aniwatch"]
+SOURCE_CYCLE = ["hianime", "allanime", "animegg", "aniwave", "zangetsu", "gogo", "tokyoinsider", "animepahe", "animetsu", "aniwatch"]
 
 SOURCE_NAMES = {
     "zangetsu": "🌀 Zangetsu",
@@ -228,6 +237,8 @@ SOURCE_NAMES = {
     "allanime": "🌌 AllAnime",
     "gogo": "🍉 GogoAnime",
     "animepahe": "🐾 AnimePahe",
+    "aniwave": "🌊 AniWave",
+    "animegg": "🥚 AnimeGG",
     "consumet": "🛰️ Consumet",
     "aniwatchapi": "🛰️ Aniwatch API",
 }
@@ -243,11 +254,13 @@ def is_provider_url(url: str) -> bool:
     """
     u = (url or "").lower()
     return (
-        u.startswith(("allanime://", "animepahe://", "consumet://", "aniwatchapi://", "zangetsu://"))
+        u.startswith(("allanime://", "animepahe://", "consumet://", "aniwatchapi://", "zangetsu://",
+                      "aniwave://", "animegg://"))
         or "hianime" in u
         or "aniwatchtv" in u
         or "zangetsu" in u
         or "gogoanime" in u
+        or "anitaku" in u
         or "animepahe" in u
     )
 
@@ -283,6 +296,10 @@ def next_episode_url(url: str):
 
 def provider_id_for_url(url: str) -> str:
     u = (url or "").lower()
+    if u.startswith("aniwave://"):
+        return "aniwave"
+    if u.startswith("animegg://"):
+        return "animegg"
     if u.startswith("allanime://") or "allanime" in u:
         return "allanime"
     if u.startswith("animepahe://") or "animepahe" in u:

@@ -5,7 +5,10 @@
 #
 #      from anime_sources import get_provider, download_episode
 #
-#  Sources (in-process): hianime.at, api.allanime.day, GogoAnime, AnimePahe
+#  Sources (in-process): hianime.at, api.allanime.day, animegg.org,
+#                         AniWave family (animewave.to/anikototv.to/animekaitv.to),
+#                         GogoAnime (anitaku.pe), AnimePahe (.com),
+#                         Zangetsu, TokyoInsider
 #  Sources (remote):     Consumet-compatible & Aniwatch-API REST servers
 #  Legacy sources:       Animetsu & AniWatch (cantarella scrapers, unchanged)
 # ============================================================================
@@ -82,10 +85,12 @@ def _cross_source_recover(url, progress_queue):
             if not name:
                 return None
             ep_num = m_id.group(3)
+            if "?" in ep_num:  # schemes that carry query data (aniwave ids=…)
+                ep_num = ep_num.split("?", 1)[0]
             words = [w for w in re.split(r"[^a-z0-9]+", name.lower()) if w]
             progress_queue.put({"status": f"🔁 ꜱᴏᴜʀᴄᴇ ꜰᴀɪʟᴇᴅ — ꜰɪɴᴅɪɴɢ '{name}' ᴇᴘ {ep_num} ᴇʟꜱᴇᴡʜᴇʀᴇ…"})
             from anime_sources.base import cached_streams as _cs2
-            for src in ("hianime", "zangetsu", "gogo"):
+            for src in ("hianime", "animegg", "aniwave", "zangetsu", "gogo"):
                 try:
                     results = search_provider(src, name)
                 except Exception:
@@ -130,7 +135,7 @@ def _cross_source_recover(url, progress_queue):
         "cross-source recovery: '%s' ep=%s from %s", query, ep_num, u[:60])
     progress_queue.put({"status": f"🔁 ꜱᴏᴜʀᴄᴇ ꜰᴀɪʟᴇᴅ — ꜰɪɴᴅɪɴɢ '{query}' ᴏɴ ᴀɴᴏᴛʜᴇʀ ꜱᴏᴜʀᴄᴇ…"})
     from anime_sources.base import cached_streams as _cs
-    for src in ("hianime", "allanime", "zangetsu", "gogo"):
+    for src in ("hianime", "allanime", "animegg", "aniwave", "zangetsu", "gogo"):
         try:
             results = search_provider(src, query)
             if not results:

@@ -28,13 +28,18 @@ class GogoSource(BaseProvider):
 
     @property
     def bases(self) -> list:
-        """Mirror chain: custom env override wins, else bid -> anitaku.bz
-        (the anitaku.bz mirror comes straight from otaku-watcher-contrib's
-        anitaku.py — same gogo-family paths, second domain to ride on)."""
+        """Mirror chain: custom env override wins, else the 2026 fleet
+        (anitaku.pe primary — confirmed live by two scrapers updated
+        2026-10; the older .bid/.bz mirrors trail as last resorts)."""
         custom = os.getenv("GOGO_BASE")
         if custom:
             return [custom.rstrip("/")]
-        return ["https://gogoanime.bid", "https://anitaku.bz"]
+        return [
+            "https://anitaku.pe", "https://anitaku.to",
+            "https://gogoanimehd.io", "https://gogoanimehd.to",
+            "https://gogoanime.hu",
+            "https://gogoanime.bid", "https://anitaku.bz",
+        ]
 
     @property
     def base(self) -> str:
@@ -84,10 +89,18 @@ class GogoSource(BaseProvider):
             raise SourceError("Gogo: anime page did not expose its id")
         content_id = m.group(1)
 
-        listing = self._get(
-            AJAX_EPISODES,
-            params={"ep_start": 0, "ep_end": 100000, "id": content_id},
-        ).text
+        listing = ""
+        for ajax_base in ("https://ajax.gogocdn.net/ajax/load-list-episode",
+                          "https://ajax.gogo-load.com/ajax/load-list-episode"):
+            try:
+                listing = self._get(
+                    ajax_base,
+                    params={"ep_start": 0, "ep_end": 100000, "id": content_id},
+                ).text
+                if listing.strip():
+                    break
+            except (SourceError, requests.RequestException):
+                continue
 
         eps = []
         for a, name in re.findall(
