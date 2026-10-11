@@ -37,7 +37,17 @@ except ImportError:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
-KEY_URL = "https://raw.githubusercontent.com/ryanwtf88/megacloud-keys/refs/heads/master/key.txt"
+# Community key repos rotate — the original (ryanwtf88) was DELETED (404 on
+# GitHub API, verified 2026-10-11), which silently broke megacloud decryption
+# everywhere. Chain multiple live repos + a CDN mirror; any one succeeding is
+# enough. Keys are cross-identical across forks (verified: 3709ad88…, 64 hex).
+KEY_URLS = [
+    "https://raw.githubusercontent.com/itzzzme/megacloud-keys/refs/heads/main/key.txt",
+    "https://raw.githubusercontent.com/itzrihan/megacloud-keys/refs/heads/main/key.txt",
+    "https://cdn.jsdelivr.net/gh/itzzzme/megacloud-keys@main/key.txt",
+    "https://raw.githubusercontent.com/ryanwtf88/megacloud-keys/refs/heads/master/key.txt",  # legacy
+]
+KEY_URL = KEY_URLS[0]  # kept for logging/compat
 MEGAPLAY_URL = "https://megaplay.buzz/stream/s-2/"
 VIDWISH_URL = "https://vidwish.live/stream/s-2/"
 
@@ -73,17 +83,23 @@ def _get_json(url: str, headers: dict = None) -> Optional[dict]:
 
 # ------------------------------------------------------------------- AES key
 def _decryption_key() -> Optional[str]:
-    """Rotating key from the community repo (cached 1h)."""
+    """Rotating key — tried across the whole KEY_URLS chain (cached 1h).
+
+    A single dead repo must never disable decryption again: we walk every
+    URL until one returns a plausible key (hex or base64-ish, >=16 chars).
+    """
     global _cached_key, _key_at
     now = time.time()
     if _cached_key and now - _key_at < _KEY_TTL:
         return _cached_key
-    resp = _get(KEY_URL, timeout=12)
-    if resp is None:
-        return _cached_key
-    key = resp.text.strip()
-    if key:
-        _cached_key, _key_at = key, now
+    for url in KEY_URLS:
+        resp = _get(url, timeout=12)
+        if resp is None:
+            continue
+        key = (resp.text or "").strip()
+        if len(key) >= 16 and " " not in key and "<" not in key:
+            _cached_key, _key_at = key, now
+            return _cached_key
     return _cached_key
 
 
