@@ -18,6 +18,7 @@
 # ============================================================================
 
 import html as html_mod
+import os
 import re
 from urllib.parse import quote_plus
 
@@ -30,7 +31,7 @@ from anime_sources.base import (
 )
 from anime_sources.megacloud import get_megacloud_stream
 
-BASE = "https://zangetsu.cc"
+BASE = os.getenv("ZANGETSU_BASE", "https://zangetsu.cc").rstrip("/")
 EMBED_CDN = "https://cdn.4animo.xyz"
 FLIXERA = "https://flixera.co"
 

@@ -235,11 +235,18 @@ SOURCE_NAMES = {
 
 def is_provider_url(url: str) -> bool:
     """True when an episode URL belongs to one of the new providers
-    (used to route downloads through the multi-source engine)."""
+    (used to route downloads through the multi-source engine).
+
+    Accepts the WHOLE hianime mirror family (hianime.at/.bz/.pe/.to/… and
+    aniwatchtv.to — the platform rotates domains), plus zangetsu. A URL from
+    any live mirror must route into the engine, not just the primary base.
+    """
     u = (url or "").lower()
     return (
-        u.startswith(("allanime://", "animepahe://", "consumet://", "aniwatchapi://"))
-        or "hianime.at/" in u
+        u.startswith(("allanime://", "animepahe://", "consumet://", "aniwatchapi://", "zangetsu://"))
+        or "hianime" in u
+        or "aniwatchtv" in u
+        or "zangetsu" in u
         or "gogoanime" in u
         or "animepahe" in u
     )

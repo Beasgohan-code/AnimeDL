@@ -334,6 +334,59 @@ async def handle_health_cmd(client: Client, message):
 
 
 # ─────────────────────────────────────────────
+# ─────────────────────────────────────────────
+#  /sources — live probe of every anime source
+# ─────────────────────────────────────────────
+@Client.on_message(filters.private & filters.command("sources") & admin)
+async def handle_sources(client: Client, message):
+    """Search-probe every provider IN PARALLEL from THIS server and show
+    which sources are actually alive right now — the only ground truth
+    that matters, since blocks are per-IP/per-region."""
+    import concurrent.futures as _cf
+    from anime_sources import search_provider
+    from anime_sources.base import SOURCE_CYCLE, SOURCE_NAMES
+    from anime_sources.hianime import BASES as HIANIME_BASES
+
+    order = [s for s in SOURCE_CYCLE if s not in ("animetsu", "aniwatch")]
+
+    def _probe(src):
+        try:
+            res = search_provider(src, "dr stone")
+            return src, (f"✅ {len(res)} results" if res else "⚠️ 0 results")
+        except Exception as e:
+            return src, f"❌ {type(e).__name__}: {str(e)[:40]}"
+
+    status = await message.reply(
+        "<blockquote>🩺 ᴘʀᴏʙɪɴɢ ᴀʟʟ ꜱᴏᴜʀᴄᴇꜱ... (ᴍᴀx ~15ꜱ)</blockquote>",
+        parse_mode=ParseMode.HTML,
+    )
+    with _cf.ThreadPoolExecutor(max_workers=len(order)) as pool:
+        futs = [pool.submit(_probe, s) for s in order]
+        rows = []
+        for f in _cf.as_completed(futs):
+            src, verdict = f.result()
+            rows.append((SOURCE_NAMES.get(src, src), verdict))
+
+    # keep the canonical cycle order in the output
+    rows.sort(key=lambda kv: [n for n, _ in rows].index(kv[0]))
+    body = "\n".join(f"• {n} — {v}" for n, v in rows)
+    overrides = (
+        f"🛠 ғɪx ᴀ ᴅᴇᴀᴅ ꜱᴏᴜʀᴄᴇ: ꜱᴇᴛ ᴇɴᴠ ᴏɴ ʀᴇɴᴅᴇʀ\n"
+        f"<code>ANIMEDL_HIANIME_BASE=https://hianime.bz</code>\n"
+        f"<code>GOGO_BASE=…</code> · <code>ZANGETSU_BASE=…</code>\n"
+        f"ᴍɪʀʀᴏʀꜱ ᴛʀɪᴇᴅ ғᴏʀ ʜɪᴀɴɪᴍᴇ: {len(HIANIME_BASES)}"
+    )
+    panel = (
+        "<blockquote>🩺 <b>ꜱᴏᴜʀᴄᴇ ʜᴇᴀʟᴛʜ</b> (ʟɪᴠᴇ ғʀᴏᴍ ᴛʜɪꜱ ꜱᴇʀᴠᴇʀ)</blockquote>\n"
+        f"<blockquote>{body}</blockquote>\n"
+        f"<blockquote>{overrides}</blockquote>"
+    )
+    try:
+        await status.edit_text(panel, parse_mode=ParseMode.HTML)
+    except Exception:
+        await message.reply(panel, parse_mode=ParseMode.HTML)
+
+
 #  /setrestart — schedule the daily hygiene restart
 # ─────────────────────────────────────────────
 @Client.on_message(filters.private & filters.command("setrestart") & admin)

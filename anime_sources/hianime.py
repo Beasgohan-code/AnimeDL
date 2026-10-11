@@ -19,11 +19,21 @@ from anime_sources.base import (
     BaseProvider, Episode, ResolvedEpisode, SearchResult, SourceError, DEFAULT_UA,
 )
 
+# Mirror fleet — hianime rotates domains constantly ( TorrentFreak: goodbye
+# message Mar 2026; r/HiAnimeZone official proxies + India-working lists,
+# Jan-May 2026 ). All proxies run the SAME app, so /search and /api/theme/*
+# paths are identical on every one. aniwatchtv.to (the predecessor) serves
+# the same platform too. Override entirely with ANIMEDL_HIANIME_BASE.
 BASES = [b for b in (
     os.getenv("ANIMEDL_HIANIME_BASE") or None,   # custom mirror wins
-    "https://hianime.at",
-    "https://hianime.bz",
+    "https://hianime.at",       # current ani-cli base
+    "https://hianime.bz",       # official proxy (India-verified)
     "https://hianime.nz",
+    "https://hianime.pe",
+    "https://hianime.do",
+    "https://hianime.sx",
+    "https://hianime.to",
+    "https://aniwatchtv.to",    # predecessor, same platform/accounts
 ) if b]
 BASE = BASES[0]
 XOR_KEY = b"otaku-embed-v1"          # ani-cli v5: deobfuscate_blob key
