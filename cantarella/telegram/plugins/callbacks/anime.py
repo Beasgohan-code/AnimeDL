@@ -39,8 +39,14 @@ async def on_anime_select(client: Client, callback_query):
         if not entries:
             await callback_query.answer("❌ ɴᴏ ᴇᴘɪꜱᴏᴅᴇꜱ ғᴏᴜɴᴅ.")
             return
+        # keep the human show title for downloads: the engine's filename and
+        # cross-source recovery both need it when the source's own API is
+        # throttled (v4.19.1 — allanime rate-limit outage)
+        _show = next((r for r in (user_search_results.get(callback_query.from_user.id) or [])
+                      if r.get("id") == anime_id), None)
         user_episodes[callback_query.from_user.id] = {
             "title": entries[0].get("title", provider.name),
+            "anime_title": (_show or {}).get("title") or None,
             "episodes": entries,
             "url": url,
             "page": 0,
@@ -70,6 +76,8 @@ async def on_anime_select(client: Client, callback_query):
 
     user_episodes[callback_query.from_user.id] = {
         'title':    entries[0].get('title', 'ᴜɴᴋɴᴏᴡɴ'),
+        'anime_title': next((r.get('title') for r in (user_search_results.get(callback_query.from_user.id) or [])
+                             if r.get('id') == anime_id), None),
         'episodes': entries,
         'url':      url,
         'page':     0

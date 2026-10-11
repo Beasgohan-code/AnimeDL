@@ -38,7 +38,7 @@ def _make_progress_bar(percent: float, length: int = 10) -> str:
 
 
 async def run_episode_batch(client, message, episodes, quality, target_chat,
-                            progress_msg=None, concurrency=2):
+                            progress_msg=None, concurrency=2, name_override=None):
     """Download several episodes with bounded parallelism, preserving order.
 
     Two episode pipelines stay hot so the upload of one episode overlaps the
@@ -57,7 +57,8 @@ async def run_episode_batch(client, message, episodes, quality, target_chat,
             try:
                 msgs, _new_status = await _handle_download(
                     client, message, ep['url'], progress_msg,
-                    quality=quality, chat_id=target_chat
+                    quality=quality, chat_id=target_chat,
+                    name_override=name_override,
                 )
                 if msgs:
                     ok_n[0] += 1

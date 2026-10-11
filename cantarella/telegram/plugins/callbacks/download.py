@@ -123,7 +123,8 @@ async def on_start_batch_dl(client: Client, callback_query):
 
             results_list, ok_n, fail_n = await run_episode_batch(
                 client, callback_query.message, ep_chunk, quality, target_chat,
-                progress_msg=status_msg
+                progress_msg=status_msg,
+                name_override=user_episodes[user_id].get('anime_title'),
             )
             batch_ok += ok_n
             batch_fail += fail_n
@@ -195,7 +196,10 @@ async def on_download_quality(client: Client, callback_query):
     target_chat   = int(TARGET_CHAT_ID) if TARGET_CHAT_ID else callback_query.message.chat.id
     uploaded_msgs, _ = await _handle_download(
         client, callback_query.message, ep_url,
-        status_msg, quality=quality, chat_id=target_chat
+        status_msg, quality=quality, chat_id=target_chat,
+        # the human show title from search — doubles as the engine's
+        # cross-source-recovery name when the source API is throttled
+        name_override=user_episodes[user_id].get('anime_title'),
     )
 
     if uploaded_msgs:

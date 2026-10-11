@@ -65,11 +65,15 @@ def list_provider_episodes(provider_id: str, anime_id: str) -> list:
     return entries
 
 
-def _cross_source_recover(url, progress_queue):
+def _cross_source_recover(url, progress_queue, name_hint=None):
     """Last-resort: a legacy/dead-source episode URL is re-resolved on LIVE
     sources by show-slug + episode number. Returns (provider, resolved) or
     None. This is what makes 'just send the link' work even when the site
-    the link points at is gone."""
+    the link points at is gone.
+
+    name_hint: the human show title the UI already knows (v4.19.1). The
+    source's own show-name API may be rate-limited exactly when its streams
+    are — the hint lets recovery proceed anyway."""
     import logging as _log
     from anime_sources.base import SourceError as _SE
     u = (url or "").lower()
@@ -80,8 +84,14 @@ def _cross_source_recover(url, progress_queue):
         # ID-only URL: ask the source provider for the show NAME, then
         # recover the same episode on the live sources by name + number
         try:
-            src_prov = get_provider(m_id.group(1))
-            name = getattr(src_prov, "show_name", lambda _sid: "")(m_id.group(2))
+            name = ""
+            try:
+                src_prov = get_provider(m_id.group(1))
+                name = getattr(src_prov, "show_name", lambda _sid: "")(m_id.group(2)) or ""
+            except Exception:
+                name = ""
+            # the UI's title works even while the source API is throttled
+            name = name or (name_hint or "")
             if not name:
                 return None
             ep_num = m_id.group(3)
@@ -219,7 +229,8 @@ def download_provider_episode(url: str, download_path: Path, progress_queue,
     # recover: search LIVE sources with the show slug from the URL, match
     # the episode number, and download from whichever source serves it.
     if resolved is None or not getattr(resolved, "streams", []):
-        recovered = _cross_source_recover(url, progress_queue)
+        recovered = _cross_source_recover(
+            url, progress_queue, name_hint=(name_override or title_fallback))
         if recovered is not None:
             provider, provider_id, resolved = recovered[0], recovered[0].id, recovered[1]
     if resolved is None or not getattr(resolved, "streams", []):

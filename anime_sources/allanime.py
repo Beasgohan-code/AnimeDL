@@ -131,6 +131,34 @@ class AllAnimeSource(BaseProvider):
                 _t.sleep(1.2)
         raise last_exc or SourceError("AllAnime: request failed")
 
+    @staticmethod
+    def _dig(data, *keys):
+        """Nested dict walk that survives junk GraphQL payloads — v4.19.1.
+
+        The API puts STRINGS at any level when it errors/limits
+        ({"data": "..."} was the live 'str'.get crash on top of the
+        top-level one fixed in 4.19.0), and sometimes double-encodes
+        objects as JSON strings. Any non-dict step yields {}; a
+        JSON-looking string is transparently unwrapped first.
+        """
+        def _unwrap(v):
+            if isinstance(v, str) and v[:1] in "{[":
+                try:
+                    return json.loads(v)
+                except Exception:  # noqa: BLE001
+                    return None
+            return v
+
+        cur = _unwrap(data)
+        for k in keys:
+            if not isinstance(cur, dict):
+                return {}
+            cur = _unwrap(cur.get(k))
+        if isinstance(cur, (dict, list)):
+            return cur
+        return {}
+
+
     def _site_get(self, path: str, referer: str = None) -> str:
         resp = http_session().get(
             SITE + path if path.startswith("/") else path,
@@ -149,8 +177,10 @@ class AllAnimeSource(BaseProvider):
             SEARCH_GQL,
         )
         results = []
-        for edge in ((data.get("data") or {}).get("shows") or {}).get("edges") or []:
-            eps = edge.get("availableEpisodes", {}) or {}
+        for edge in self._dig(data, "data", "shows", "edges") or []:
+            if not isinstance(edge, dict):
+                continue
+            eps = self._dig(edge, "availableEpisodes")
             count = eps.get("sub") or eps.get("dub") or 0
             results.append(SearchResult(
                 id=str(edge.get("_id", "")),
@@ -167,9 +197,11 @@ class AllAnimeSource(BaseProvider):
 
     def _fetch_episodes(self, anime_id: str) -> list:
         data = self._gql({"showId": anime_id}, EPISODES_LIST_GQL)
-        show = (data.get("data", {}) or {}).get("show", {}) or {}
-        detail = show.get("availableEpisodesDetail", {}) or {}
+        show = self._dig(data, "data", "show")
+        detail = self._dig(show, "availableEpisodesDetail")
         numbers = detail.get("sub") or detail.get("dub") or []
+        if not isinstance(numbers, list):
+            numbers = []
         eps = [
             Episode(number=str(n), url=f"allanime://{anime_id}/{n}", title=f"Episode {n}")
             for n in numbers
@@ -185,8 +217,9 @@ class AllAnimeSource(BaseProvider):
         """Display name for a show id (used by cross-source recovery)."""
         try:
             data = self._gql({}, SHOW_NAME_GQL.replace("SHOW_ID", show_id))
-            show = (data.get("data", {}) or {}).get("show", {}) or {}
-            return show.get("name") or show.get("englishName") or ""
+            show = self._dig(data, "data", "show")
+            name = show.get("name") or show.get("englishName") or ""
+            return name if isinstance(name, str) else str(name)
         except Exception:
             return ""
 
@@ -202,16 +235,22 @@ class AllAnimeSource(BaseProvider):
             data = self._gql({}, q)
         except Exception:
             return []
-        infos = (data.get("data", {}) or {}).get("episodeInfos", []) or []
+        infos = self._dig(data, "data", "episodeInfos")
+        if not isinstance(infos, list):
+            infos = []
         streams = []
         field = {"sub": "vidInforssub", "dub": "vidInforsdub"}.get(mode, "vidInforssub")
         for info in infos:
-            for vinfo in info.get(field, []) or []:
-                path = (vinfo or {}).get("vidPath", "")
+            if not isinstance(info, dict):
+                continue
+            for vinfo in info.get(field) or []:
+                if not isinstance(vinfo, dict):
+                    continue
+                path = vinfo.get("vidPath", "")
                 if not path:
                     continue
                 url = path if path.startswith("http") else f"{CDN_BASE}/{path.lstrip('/')}"
-                res = (vinfo or {}).get("vidResolution", "")
+                res = vinfo.get("vidResolution", "")
                 streams.append({
                     "quality": f"{res}p" if res else "auto",
                     "url": url,
@@ -229,8 +268,10 @@ class AllAnimeSource(BaseProvider):
             {"showId": show_id, "translationType": mode, "episodeString": ep_num},
             EPISODE_EMBED_GQL,
         )
-        episode = (data.get("data", {}) or {}).get("episode", {}) or {}
-        raw_urls = episode.get("sourceUrls", []) or []
+        episode = self._dig(data, "data", "episode")   # survives {"data": "<str>"}
+        raw_urls = episode.get("sourceUrls") or []
+        if not isinstance(raw_urls, list):
+            raw_urls = []
 
         # Each sourceUrl looks like "--<provider>-<hex-encoded path>"
         provider_paths = []
