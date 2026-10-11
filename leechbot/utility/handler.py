@@ -1,4 +1,5 @@
 import config
+import uikit
 # AnimeDL — leech module. Based on LeechBot (MIT License) — see LICENSES/LeechBot-LICENSE.
 # =============================================================================
 
@@ -542,16 +543,21 @@ async def SendLogs(is_leech: bool):
     total_bytes = sum(Transfer.up_bytes) if is_leech else Transfer.total_down_size
     avg_speed = sizeUnit(total_bytes / elapsed_secs) if elapsed_secs > 0 else "0 B"
 
-    files_line = f"📋 <b>Files:</b> <code>{file_count_num}</code>\n" if is_leech else ""
-
+    rows = [
+        f"📛 <b>Name:</b> <code>{Messages.download_name or 'Unknown'}</code>",
+        f"📦 <b>Size:</b> <code>{size}</code>",
+    ]
+    if is_leech:
+        rows.append(f"📋 <b>Files:</b> <code>{file_count_num}</code>")
+    rows += [
+        f"⚡ <b>Avg speed:</b> <code>{avg_speed}/s</code>",
+        f"⏱️ <b>Time:</b> <code>{elapsed}</code>",
+    ]
     summary = (
-        f"\n\n<b>✅ TASK COMPLETE</b>\n\n"
-        f"📛 <b>Name:</b> <code>{Messages.download_name or 'Unknown'}</code>\n"
-        f"📦 <b>Size:</b> <code>{size}</code>\n"
-        f"{files_line}"
-        f"⚡ <b>Speed:</b> <code>{avg_speed}/s</code>\n"
-        f"⏱️ <b>Time:</b> <code>{elapsed}</code>\n\n"
-        f"🤖 AnimeDL • v{config.VERSION}"
+        f"\n\n<b>✅ TASK COMPLETE</b>\n"
+        f"<blockquote><code>{uikit.bar(100, 14)}</code>  Done</blockquote>\n"
+        + "\n".join(rows)
+        + f"\n\n🤖 AnimeDL • v{config.VERSION}"
     )
 
     if not BOT.State.task_going:

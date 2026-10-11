@@ -15,6 +15,7 @@ import logging
 import traceback
 from datetime import datetime
 from pyrogram import types
+import uikit
 
 logger = logging.getLogger(__name__)
 
@@ -64,11 +65,7 @@ class TelegramLogHandler(logging.Handler):
                 continue
 
             try:
-                await self.client.send_message(
-                    chat_id=self.dump_id,
-                    text=msg,
-                    link_preview_options=types.LinkPreviewOptions(is_disabled=True),
-                )
+                await uikit.send(self.client, self.dump_id, msg)
             except Exception as e:
                 # Don't recurse — just log to stderr
                 print(f"[TelegramLogHandler] Failed to send log: {e}", flush=True)
@@ -93,19 +90,23 @@ class TelegramLogHandler(logging.Handler):
         emoji = level_emoji.get(record.levelno, "ℹ️")
         time_str = datetime.now().strftime("%H:%M:%S")
 
-        msg = f"{emoji} <b>{record.levelname}</b> <code>{time_str}</code>\n"
-        msg += f"<b>Module:</b> <code>{record.name}</code>\n"
-        msg += f"<b>Message:</b>\n<code>{record.getMessage()[:1500]}</code>"
-
+        import html as _html
+        body = (
+            uikit.heading(f"{emoji} {record.levelname}", level=4)
+            + uikit.kv([
+                ("🕐 Time", uikit.code(time_str)),
+                ("🧩 Module", uikit.code(record.name)),
+            ])
+            + "<pre>" + _html.escape(record.getMessage()[:1500]) + "</pre>"
+        )
         # Include traceback for exceptions
         if record.exc_info and record.exc_info[1]:
             tb = "".join(traceback.format_exception(*record.exc_info))
             # Truncate long tracebacks
             if len(tb) > 1000:
                 tb = tb[:500] + "\n...\n" + tb[-500:]
-            msg += f"\n\n<b>Traceback:</b>\n<code>{tb}</code>"
-
-        return msg
+            body += "<pre>" + _html.escape(tb) + "</pre>"
+        return uikit.panel("Error report", body, level=3)
 
 
 # =============================================================================
@@ -132,11 +133,16 @@ class AsyncExceptionHandler:
         else:
             tb = "No traceback available"
 
-        error_msg = (
-            f"💀 <b>Unhandled Asyncio Exception</b>\n\n"
-            f"<b>Message:</b> <code>{message}</code>\n"
-            f"<b>Exception:</b> <code>{type(exception).__name__}: {exception}</code>\n\n"
-            f"<b>Traceback:</b>\n<code>{tb}</code>"
+        import html as _html
+        error_msg = uikit.panel(
+            "Unhandled Asyncio Exception",
+            uikit.heading("💀 Unhandled Asyncio Exception", level=4)
+            + uikit.kv([
+                ("💬 Message", uikit.code(message)),
+                ("⚠️ Exception", uikit.code(f"{type(exception).__name__}: {exception}")),
+            ])
+            + "<pre>" + _html.escape(tb) + "</pre>",
+            level=3,
         )
 
         # Send to Telegram (non-blocking)
@@ -151,11 +157,7 @@ class AsyncExceptionHandler:
     async def _send(self, msg: str):
         """Send error message to Telegram."""
         try:
-            await self.client.send_message(
-                chat_id=self.dump_id,
-                text=msg[:4096],
-                link_preview_options=types.LinkPreviewOptions(is_disabled=True),
-            )
+            await uikit.send(self.client, self.dump_id, msg)
         except Exception as e:
             print(f"[AsyncExceptionHandler] Failed to send: {e}", flush=True)
 

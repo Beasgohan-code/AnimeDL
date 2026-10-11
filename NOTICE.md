@@ -23,6 +23,12 @@ MIT License.
 [N_m3u8DL-RE](https://github.com/nilaoda/N_m3u8DL-RE) by nilaoda, bundled for
 deployment convenience. All rights remain with its original authors.
 
+## 4. Rich UI layer
+
+`uikit.py` is built on [richgram](https://github.com/Badmunda05/richgram) by
+**Bad Munda**, MIT License — installed from PyPI as a dependency (not bundled);
+its license text is available in the distributed package.
+
 ## Modifications
 
 Both cores have been substantially modified for this project: the two bots

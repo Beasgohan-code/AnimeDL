@@ -17,6 +17,7 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from leechbot import app
 from leechbot.utility.variables import BOT, MSG, BotTimes, Paths
 from leechbot.utility.helper import send_settings, sysINFO, sysINFO_full, status_keyboard
+import uikit
 import config
 
 logger = logging.getLogger(__name__)
@@ -30,7 +31,7 @@ from .common import safe_answer
 # =============================================================================
 def _strip_sysinfo(text: str) -> str:
     """Strip existing system info block from message text."""
-    for separator in ("<b>─── System ───</b>", "<b>📊 System Info (Detailed)</b>"):
+    for separator in ("<b>─── System ───</b>", "<b>📊 System</b>", "<b>📊 System Info (Detailed)</b>"):
         idx = text.find(separator)
         if idx != -1:
             return text[:idx].rstrip()
@@ -63,14 +64,15 @@ async def _handle_sys_stats(client, callback_query):
     new_text = _strip_sysinfo(original_text) + sysINFO_full()
     try:
         if callback_query.message.photo:
+            # captions can't carry rich markup — use the classic block
             await callback_query.message.edit_caption(
-                caption=new_text,
+                caption=_strip_sysinfo(original_text) + sysINFO(),
                 reply_markup=status_keyboard(),
             )
         else:
-            await callback_query.message.edit_text(
-                text=new_text,
-                link_preview_options=types.LinkPreviewOptions(is_disabled=True),
+            await uikit.edit_where(
+                client, callback_query.message.chat.id, callback_query.message.id,
+                new_text,
                 reply_markup=status_keyboard(),
             )
         await safe_answer(callback_query, "Detailed stats ✓")

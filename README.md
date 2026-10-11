@@ -31,6 +31,16 @@ Both cores share a single Telegram session. Command menus, callbacks and
 message routing are de-conflicted so `/start`, search, leech and settings all
 live together cleanly.
 
+### 🎨 Rich modern UI (Bot API 10.3)
+Powered by [richgram](https://github.com/Badmunda05/richgram):
+- **Native rich messages** — headings, key/value tables, expandable `<details>`
+  sections and brand footers render natively in updated clients
+- **Styled buttons** — primary / success / danger / link styles on menus
+- **Live progress panels** — Unicode progress bar + speed/ETA/size table +
+  system stats, updated in place during every task
+- **Automatic fallback** — any client or path that can't render rich gets a
+  clean classic-HTML version of the same panel
+
 ---
 
 ## 📋 Commands (highlights)

@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 from asyncio import get_running_loop, sleep
 
 from leechbot import app
+import uikit
 from pyrogram import types
 from pyrogram.errors import BadRequest
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
@@ -450,7 +451,7 @@ def convertIMG(image_path: str) -> str:
 # =============================================================================
 def _strip_sysinfo(text: str) -> str:
     """Strip existing system info block from message text."""
-    for separator in ("<b>─── System ───</b>", "<b>📊 System Info (Detailed)</b>"):
+    for separator in ("<b>─── System ───</b>", "<b>📊 System</b>", "<b>📊 System Info (Detailed)</b>"):
         idx = text.find(separator)
         if idx != -1:
             return text[:idx].rstrip()
@@ -476,25 +477,21 @@ def sysINFO() -> str:
 # System Information (Detailed)
 # =============================================================================
 def sysINFO_full() -> str:
-    """Get detailed system information including network and per-core CPU."""
+    """Detailed system information as a rich key/value table."""
     try:
         ram = psutil.virtual_memory()
         disk = psutil.disk_usage("/")
-        cpu_percent = psutil.cpu_percent(interval=0.5, percpu=True)
         net = psutil.net_io_counters()
-
-        core_str = ", ".join(f"{c}%" for c in cpu_percent[:8])
-        if len(cpu_percent) > 8:
-            core_str += ", ..."
-
-        return f"""
-
-<b>📊 System Info (Detailed)</b>
-• 🖥️ <b>CPU:</b> <code>{psutil.cpu_percent()}%</code> (cores: {core_str})
-• 💽 <b>RAM:</b> <code>{sizeUnit(ram.used)} / {sizeUnit(ram.total)}</code> ({ram.percent}%)
-• 💾 <b>Disk:</b> <code>{sizeUnit(disk.used)} / {sizeUnit(disk.total)}</code> ({disk.percent}%)
-• 🌐 <b>Net:</b> ↓<code>{sizeUnit(net.bytes_recv)}</code> ↑<code>{sizeUnit(net.bytes_sent)}</code>
-• ⏱️ <b>Uptime:</b> <code>{getTime(int(time() - psutil.boot_time()))}</code>"""
+        return (
+            "\n<b>📊 System</b>"
+            + uikit.kv([
+                ("🖥️ CPU", uikit.code(f"{psutil.cpu_percent(interval=None):.0f}% · {psutil.cpu_count()} cores")),
+                ("💽 RAM", uikit.code(f"{sizeUnit(ram.used)} / {sizeUnit(ram.total)} ({ram.percent}%)")),
+                ("💾 Disk", uikit.code(f"{sizeUnit(disk.used)} / {sizeUnit(disk.total)} ({disk.percent}%)")),
+                ("🌐 Net", uikit.code(f"↓{sizeUnit(net.bytes_recv)} ↑{sizeUnit(net.bytes_sent)}")),
+                ("⏱️ Uptime", uikit.code(getTime(int(time() - psutil.boot_time())))),
+            ])
+        )
     except Exception:
         return sysINFO()
 
@@ -502,18 +499,17 @@ def sysINFO_full() -> str:
 # Download/Upload Statistics Summary
 # =============================================================================
 def format_stats() -> str:
-    """Generate a text-based statistics summary."""
+    """Bot statistics as a rich key/value table."""
     from leechbot.utility.variables import BotStats
 
     uptime = getTime(int((datetime.now() - BotStats.start_time).total_seconds()))
-
-    return f"""<b>📊 Bot Statistics</b>
-
-• 📥 <b>Total Downloads:</b> <code>{BotStats.total_tasks}</code>
-• 📤 <b>Data Downloaded:</b> <code>{sizeUnit(BotStats.total_downloaded)}</code>
-• 📥 <b>Data Uploaded:</b> <code>{sizeUnit(BotStats.total_uploaded)}</code>
-• ❌ <b>Failed Tasks:</b> <code>{BotStats.failed_tasks}</code>
-• ⏱️ <b>Uptime:</b> <code>{uptime}</code>"""
+    return uikit.kv([
+        ("📥 Total tasks", uikit.code(BotStats.total_tasks)),
+        ("⬇️ Downloaded", uikit.code(sizeUnit(BotStats.total_downloaded))),
+        ("⬆️ Uploaded", uikit.code(sizeUnit(BotStats.total_uploaded))),
+        ("❌ Failed tasks", uikit.code(BotStats.failed_tasks)),
+        ("⏱️ Uptime", uikit.code(uptime)),
+    ])
 
 # =============================================================================
 # Multipart Archive Handling
@@ -629,74 +625,56 @@ async def message_deleter(user_msg, bot_msg):
 # Settings Menu
 # =============================================================================
 async def send_settings(client, message, msg_id: int, is_command: bool):
-    """Send or edit the interactive settings menu."""
-    up_mode = "Media" if BOT.Options.stream_upload else "Document"
-
-    keyboard = InlineKeyboardMarkup([
+    """Send or edit the interactive settings menu (rich panel + styled buttons)."""
+    on_off = lambda v: ("✅ On" if v else "❌ Off")
+    rows = [
+        [uikit.btn(
+            f"📤 Upload: {BOT.Setting.stream_upload}",
+            callback_data="media" if BOT.Options.stream_upload else "document",
+            style="primary",
+        )],
         [
-            InlineKeyboardButton(f"📤 {up_mode}", callback_data="media" if up_mode == "Document" else "document"),
-            InlineKeyboardButton("🎬 Video", callback_data="video"),
+            uikit.btn("🎬 Video", callback_data="video", style="default"),
+            uikit.btn("📝 Caption", callback_data="caption", style="default"),
+            uikit.btn("🖼️ Thumb", callback_data="thumb", style="default"),
         ],
         [
-            InlineKeyboardButton("📝 Caption", callback_data="caption"),
-            InlineKeyboardButton("🖼️ Thumb", callback_data="thumb"),
+            uikit.btn("➕ Prefix", callback_data="set-prefix", style="default"),
+            uikit.btn("➕ Suffix", callback_data="set-suffix", style="default"),
         ],
         [
-            InlineKeyboardButton("➕ Prefix", callback_data="set-prefix"),
-            InlineKeyboardButton("➕ Suffix", callback_data="set-suffix"),
+            uikit.btn(f"📸 Photos: {BOT.Setting.photo_mode}", callback_data="photo_mode", style="default"),
+            uikit.btn(f"⏳ Auto-Del: {on_off(BOT.Setting.auto_delete)}", callback_data="autodelete", style="default"),
         ],
+        [uikit.btn(f"📸 Auto-SS: {on_off(BOT.Setting.auto_screenshot)}", callback_data="screenshot", style="default")],
         [
-            InlineKeyboardButton(
-                f"📸 Photos: {BOT.Setting.photo_mode}",
-                callback_data="photo_mode"
-            ),
+            uikit.btn("❰ Back", callback_data="start_back", style="link"),
+            uikit.btn("🔒 Close", callback_data="close", style="danger"),
         ],
-        [
-            InlineKeyboardButton(
-                f"⏳ Auto-Delete: {'ON' if BOT.Setting.auto_delete else 'OFF'}",
-                callback_data="autodelete",
-            ),
-        ],
-        [
-            InlineKeyboardButton(
-                f"📸 Auto-SS: {'ON' if BOT.Setting.auto_screenshot else 'OFF'}",
-                callback_data="screenshot",
-            ),
-        ],
-        [
-            InlineKeyboardButton("❰ Back", callback_data="start_back"),
-            InlineKeyboardButton("🔒 Close", callback_data="close"),
-        ],
-    ])
-
-    pr = "✅" if BOT.Setting.prefix else "❎"
-    su = "✅" if BOT.Setting.suffix else "❎"
-    thmb = "✅" if BOT.Setting.thumbnail else "❎"
-    auto_del = f"{BOT.Setting.auto_delete_delay}s" if BOT.Setting.auto_delete else "Off"
-
-    text = f"""<b>⚙️ Bot Settings</b>
-
-• 📤 <b>Upload:</b> <code>{BOT.Setting.stream_upload}</code>
-• ✂️ <b>Split:</b> <code>{BOT.Setting.split_video}</code>
-• 🔄 <b>Convert:</b> <code>{BOT.Setting.convert_video}</code>
-• 📝 <b>Caption:</b> <code>{BOT.Setting.caption}</code>
-• ➕ <b>Prefix:</b> {pr}
-• ➕ <b>Suffix:</b> {su}
-• 🖼️ <b>Thumb:</b> {thmb}
-• 📸 <b>Photos:</b> <code>{BOT.Setting.photo_mode}</code>
-• ⏳ <b>Auto-Delete:</b> <code>{auto_del}</code>
-• 📸 <b>Auto-SS:</b> <code>{'ON' if BOT.Setting.auto_screenshot else 'OFF'}</code>"""
+    ]
+    body = (
+        uikit.kv([
+            ("📤 Upload mode", uikit.code(BOT.Setting.stream_upload)),
+            ("✂️ Split", uikit.code(BOT.Setting.split_video)),
+            ("🔄 Convert", uikit.code(f"{BOT.Setting.convert_video} ({BOT.Setting.convert_quality})")),
+            ("📝 Caption", uikit.code(BOT.Setting.caption)),
+            ("➕ Prefix", uikit.code("set" if BOT.Setting.prefix else "none")),
+            ("➕ Suffix", uikit.code("set" if BOT.Setting.suffix else "none")),
+            ("🖼️ Thumbnail", uikit.code(on_off(BOT.Setting.thumbnail))),
+            ("📸 Photos", uikit.code(BOT.Setting.photo_mode)),
+            ("⏳ Auto-delete", uikit.code(f"{BOT.Setting.auto_delete_delay}s" if BOT.Setting.auto_delete else "off")),
+            ("📸 Auto-SS", uikit.code(on_off(BOT.Setting.auto_screenshot))),
+        ])
+        + uikit.buttons(*rows)
+        + uikit.footer()
+    )
+    settings_panel = uikit.panel("⚙️ Leech Settings", body, level=3, with_footer=False)
 
     try:
         if is_command:
-            await message.reply_text(text=text, reply_markup=keyboard)
+            await uikit.reply(message, settings_panel, client=client)
         else:
-            await app.edit_message_text(
-                chat_id=message.chat.id,
-                message_id=msg_id,
-                text=text,
-                reply_markup=keyboard
-            )
+            await uikit.edit_where(client, message.chat.id, msg_id, settings_panel)
     except BadRequest as e:
         logger.error(f"Settings menu error: {e}")
     except Exception as e:
@@ -726,21 +704,10 @@ async def status_bar(down_msg: str, speed: str, percentage: float, eta: str,
     System info (CPU / RAM / disk / network / uptime) is always
     appended below the progress bar.
     """
-    bar_length = 12
-    filled = int(percentage / 100 * bar_length)
-    bar = "█" * filled + "░" * (bar_length - filled)
-
     elapsed = getTime((datetime.now() - BotTimes.start_time).total_seconds())
 
-    text = (
-        f"\n<b>━━━ Progress ━━━</b>\n"
-        f"{bar}  <b>{percentage:.2f}%</b>\n\n"
-        f"⚡ <b>Speed:</b> <code>{speed}</code>\n"
-        f"⏳ <b>ETA:</b> <code>{eta}</code>\n"
-        f"📦 <b>Processed:</b> <code>{done}</code> / <code>{left}</code>\n"
-        f"⏱️ <b>Elapsed:</b> <code>{elapsed}</code>\n"
-        f"🔧 <b>Engine:</b> <code>{engine}</code>"
-    )
+    text = uikit.progress_panel("", percentage, speed, eta, done, left, engine)
+    text += f"\n<b>⏱️ Elapsed:</b> <code>{elapsed}</code>"
 
     # Append system info
     text += sysINFO_full()
@@ -750,10 +717,10 @@ async def status_bar(down_msg: str, speed: str, percentage: float, eta: str,
             # Always strip from full prefix to prevent duplicate sysinfo blocks
             from leechbot.utility.variables import Messages
             full_prefix = _strip_sysinfo(Messages.task_msg + Messages.status_head)
-            await MSG.status_msg.edit_text(
-                text=full_prefix + text,
-                link_preview_options=types.LinkPreviewOptions(is_disabled=True),
-                reply_markup=status_keyboard()
+            await uikit.edit_where(
+                app, MSG.status_msg.chat.id, MSG.status_msg.id,
+                full_prefix + text,
+                reply_markup=status_keyboard(),
             )
     except BadRequest:
         pass

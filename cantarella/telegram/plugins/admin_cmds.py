@@ -9,6 +9,7 @@ import platform
 
 from cantarella.core.database import db
 from config import OWNER_ID
+import uikit
 
 async def check_admin(filter, client, message):
     try:
@@ -168,70 +169,53 @@ async def handle_stats(client: Client, message):
     if message.from_user.id != OWNER_ID and not is_admin:
         return await message.reply("<blockquote>❌ ᴛʜɪꜱ ᴄᴏᴍᴍᴀɴᴅ ɪꜱ ғᴏʀ ᴀᴅᴍɪɴɪꜱᴛʀᴀᴛᴏʀꜱ ᴏɴʟʏ.</blockquote>", parse_mode=ParseMode.HTML)
 
-    sts = await message.reply("<blockquote>📊 <b>ғᴇᴛᴄʜɪɴɢ ꜱᴛᴀᴛɪꜱᴛɪᴄꜱ...</b></blockquote>", parse_mode=ParseMode.HTML)
+    sts = await uikit.reply(message, uikit.note("📊 Fetching statistics…"), client=client)
 
     total_users = await db.get_user_count()
-    total_admins = len(await db.get_all_admins()) + 1 # +1 for owner
+    total_admins = len(await db.get_all_admins()) + 1  # +1 for owner
     processed_eps = await db.get_processed_count()
     ongoing_enabled = await db.get_user_setting(0, "ongoing_enabled", False)
 
-    # Storage Stats
     def fmt(b):
         if b < 1024*1024: return f"{b/1024:.2f} KB"
         if b < 1024*1024*1024: return f"{b/(1024*1024):.2f} MB"
         return f"{b/(1024*1024*1024):.2f} GB"
 
-    def get_bar(percent):
-        filled = int(percent / 10)
-        return "▰" * filled + "▱" * (10 - filled)
+    bot_pairs = [
+        ("👤 Users", uikit.code(total_users)),
+        ("🛡️ Admins", uikit.code(total_admins)),
+        ("📼 Episodes processed", uikit.code(processed_eps)),
+        ("📡 Ongoing auto-download", uikit.code("ON" if ongoing_enabled else "OFF")),
+    ]
 
-    # Storage Stats
-    storage_info = ""
+    storage_pairs = []
     db_stats = await db.get_db_stats()
     if db_stats:
         used_bytes = db_stats['storage_size']
-        total_bytes = 512 * 1024 * 1024 # 512MB for Atlas M0
+        total_bytes = 512 * 1024 * 1024  # Atlas M0
         percent = (used_bytes / total_bytes) * 100
-        storage_info = (
-            f"\n\n🗄️ <b>ᴅᴀᴛᴀʙᴀꜱᴇ ꜱᴛᴏʀᴀɢᴇ:</b>\n"
-            f"<code>{get_bar(percent)}</code> {percent:.1f}%\n"
-            f"<b>ᴜꜱᴇᴅ:</b> <code>{fmt(used_bytes)}</code> / <b>ᴛᴏᴛᴀʟ:</b> <code>512.00 MB</code>"
-        )
+        storage_pairs = [
+            ("🗄️ DB storage", uikit.code(f"{uikit.bar(percent, 12)} {percent:.1f}%")),
+            ("💽 DB used", uikit.code(f"{fmt(used_bytes)} / 512 MB")),
+        ]
 
-    # System Stats
     cpu_usage = psutil.cpu_percent()
     ram = psutil.virtual_memory()
     disk = psutil.disk_usage('/')
+    sys_pairs = [
+        ("🖥️ CPU", uikit.code(f"{uikit.bar(cpu_usage, 12)} {cpu_usage:.0f}%")),
+        ("💽 RAM", uikit.code(f"{uikit.bar(ram.percent, 12)} {fmt(ram.used)} / {fmt(ram.total)}")),
+        ("💾 Disk", uikit.code(f"{uikit.bar(disk.percent, 12)} {fmt(disk.used)} / {fmt(disk.total)}")),
+    ]
 
-    sys_info = (
-        f"\n\n🖥️ <b>ꜱʏꜱᴛᴇᴍ ꜱᴛᴀᴛɪꜱᴛɪᴄꜱ:</b>\n"
-        f"<b>ᴄᴘᴜ:</b> <code>{get_bar(cpu_usage)}</code> {cpu_usage}%\n"
-        f"<b>ʀᴀᴍ:</b> <code>{get_bar(ram.percent)}</code> {ram.percent}%\n"
-        f"<b>ᴜꜱᴇᴅ:</b> <code>{fmt(ram.used)}</code> / <b>ᴛᴏᴛᴀʟ:</b> <code>{fmt(ram.total)}</code>\n"
-        f"<b>ᴅɪꜱᴋ:</b> <code>{get_bar(disk.percent)}</code> {disk.percent}%\n"
-        f"<b>ᴜꜱᴇᴅ:</b> <code>{fmt(disk.used)}</code> / <b>ᴛᴏᴛᴀʟ:</b> <code>{fmt(disk.total)}</code>"
-    )
+    specs_pairs = [
+        ("🖥️ OS", uikit.code(f"{platform.system()} {platform.release()}")),
+        ("🧩 Arch", uikit.code(platform.machine())),
+        ("🐍 Python", uikit.code(platform.python_version())),
+    ]
 
-    # System Specs
-    specs = (
-        f"\n\n⚙️ <b>ꜱʏꜱᴛᴇᴍ ꜱᴘᴇᴄɪғɪᴄᴀᴛɪᴏɴꜱ:</b>\n"
-        f"<b>ᴏꜱ:</b> <code>{platform.system()} {platform.release()}</code>\n"
-        f"<b>ᴀʀᴄʜ:</b> <code>{platform.machine()}</code>\n"
-        f"<b>ᴘʏᴛʜᴏɴ:</b> <code>{platform.python_version()}</code>"
-    )
-
-    text = (
-        "<blockquote>📊 <b>ʙᴏᴛ ꜱᴛᴀᴛɪꜱᴛɪᴄꜱ</b>\n\n"
-        f"👤 <b>ᴛᴏᴛᴀʟ ᴜꜱᴇʀꜱ:</b> <code>{total_users}</code>\n"
-        f"🛡️ <b>ᴛᴏᴛᴀʟ ᴀᴅᴍɪɴꜱ:</b> <code>{total_admins}</code>\n"
-        f"📼 <b>ᴇᴘɪꜱᴏᴅᴇꜱ ᴘʀᴏᴄᴇꜱꜱᴇᴅ:</b> <code>{processed_eps}</code>\n"
-        f"📡 <b>ᴏɴɢᴏɪɴɢ ᴀᴜᴛᴏ-ᴅᴏᴡɴʟᴏᴀᴅ:</b> {'✅ ᴏɴ' if ongoing_enabled else '❌ ᴏғғ'}"
-        f"{storage_info}"
-        f"{sys_info}"
-        f"{specs}</blockquote>"
-    )
-
-    await sts.edit_text(text, parse_mode=ParseMode.HTML)
+    panel = uikit.stats_panel(bot_pairs, uikit.kv(storage_pairs) if storage_pairs else "", sys_pairs, specs_pairs)
+    await uikit.edit(sts, panel, client=client)
 
 @Client.on_message(filters.private & filters.command("ping"))
 async def handle_ping(client: Client, message):
@@ -240,7 +224,19 @@ async def handle_ping(client: Client, message):
     end_t = time.time()
 
     ping = (end_t - start_t) * 1000
-    await msg.edit_text(f"<b>ᴘᴏɴɢ!</b> <code>{ping:.3f} ᴍꜱ</code>", parse_mode=ParseMode.HTML)
+    quality = "Excellent" if ping < 200 else ("Good" if ping < 500 else ("Average" if ping < 1000 else "Poor"))
+    from cantarella.telegram.plugins.callbacks.admin import BOT_START_TIME
+    uptime = time.strftime("%Hʜ %Mᴍ %Sꜱ", time.gmtime(time.time() - BOT_START_TIME))
+    try:
+        ram = psutil.virtual_memory()
+        sys_pairs = [
+            ("🖥️ CPU", uikit.code(f"{psutil.cpu_percent(interval=None):.0f}%")),
+            ("💽 RAM", uikit.code(f"{ram.percent}%")),
+        ]
+    except Exception:
+        sys_pairs = []
+    panel = uikit.ping_panel(ping, uptime, quality, sys_pairs)
+    await uikit.edit(msg, panel, client=client)
 
 
 @Client.on_message(filters.private & filters.command("restart"))

@@ -1,4 +1,5 @@
 import config
+import uikit
 # AnimeDL — leech module. Based on LeechBot (MIT License) — see LICENSES/LeechBot-LICENSE.
 # =============================================================================
 # License   : MIT License
@@ -133,15 +134,36 @@ CATEGORIES = [
 # =============================================================================
 # /start
 # =============================================================================
-WELCOME_TEXT = """<b>🤖 AnimeDL</b> — Anime Downloader & Leech Bot
+WELCOME_TEXT = (
+    "<b>🤖 AnimeDL</b> — Anime Downloader & Leech Bot\n\n"
+    "Send any link or anime name to begin."
+)
 
-◈ Powerful · Fast · Secure
-◈ Download from 2000+ sources
-◈ Upload to Telegram or Google Drive
+_SUPPORT_URL = config.SUPPORT_CONTACT or getattr(config, "BOT_REPO", "") or "https://github.com/Beasgohan-code/AnimeDL"
 
-<b>📥 Send any link to start downloading.</b>
-
-Tap a button below to explore:"""
+WELCOME_HTML = (
+    uikit.heading("🤖 AnimeDL", level=2)
+    + uikit.kv([
+        ("🎬 Anime", "Search & download episodes"),
+        ("📥 Leech", "2000+ sources → Telegram / Drive"),
+        ("☁️ Mirror", "Google Drive supported"),
+        ("⚡ Engine", "yt-dlp · aria2 · N_m3u8DL-RE"),
+    ])
+    + uikit.note("Send any link or anime name to begin.")
+    + uikit.buttons(
+        [
+            uikit.btn("📖 Help", callback_data="help_all_0", style="primary"),
+            uikit.btn("ℹ️ About", callback_data="about", style="default"),
+        ],
+        [uikit.btn("⚙️ Settings", callback_data="settings_menu", style="success")],
+        [
+            uikit.btn("📂 GitHub", url=getattr(config, "BOT_REPO", _SUPPORT_URL), style="link"),
+            uikit.btn("💬 Support", url=_SUPPORT_URL, style="link"),
+        ],
+        [uikit.btn("❌ Close", callback_data="close", style="danger")],
+    )
+    + uikit.footer()
+)
 
 
 def _start_keyboard():
@@ -160,45 +182,26 @@ def _start_keyboard():
 
 
 async def _send_welcome(client, message, edit: bool = False):
-    photo = _get_random_photo()
+    """Show the welcome panel (rich-first with automatic fallback)."""
     if edit:
-        if photo:
-            try:
-                await message.edit_media(
-                    InputMediaPhoto(photo, caption=WELCOME_TEXT),
-                    reply_markup=_start_keyboard(),
-                )
-                return
-            except Exception:
-                pass
         try:
-            await message.edit_text(
-                WELCOME_TEXT,
-                reply_markup=_start_keyboard(),
-                link_preview_options=types.LinkPreviewOptions(is_disabled=True),
-            )
+            await uikit.edit(message, WELCOME_HTML, client=client)
             return
         except Exception:
             pass
-    try:
-        await message.delete()
-    except Exception:
-        pass
-    if photo:
+    else:
         try:
-            await message.reply_photo(
-                photo=photo,
-                caption=WELCOME_TEXT,
-                reply_markup=_start_keyboard(),
-            )
-            return
+            await message.delete()
         except Exception:
             pass
-    await message.reply_text(
-        WELCOME_TEXT,
-        reply_markup=_start_keyboard(),
-        link_preview_options=types.LinkPreviewOptions(is_disabled=True),
-    )
+    sent = await uikit.send(client, message.chat.id, WELCOME_HTML)
+    if sent is None:
+        # last-resort classic text
+        await message.reply_text(
+            WELCOME_TEXT,
+            reply_markup=_start_keyboard(),
+            link_preview_options=types.LinkPreviewOptions(is_disabled=True),
+        )
 
 
 # NOTE (merged bot): the /start and /help *commands* below are DISABLED —

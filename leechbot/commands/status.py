@@ -20,6 +20,7 @@ from leechbot.utility.task_manager import task_starter
 from leechbot.utility.helper import (
     send_settings, message_deleter, format_stats, sysINFO, getTime, sizeUnit,
 )
+import uikit
 from leechbot.utility.handler import cancelTask
 import config
 
@@ -124,8 +125,8 @@ async def status_command(client, message):
     else:
         queue_section = "<b>📋 Queue</b>\n\n• <code>Empty</code>"
 
-    status_text = f"{active_section}\n\n{queue_section}"
-    msg = await message.reply_text(status_text, quote=True)
+    status_panel = uikit.status_panel(active_section, queue_section)
+    msg = await uikit.reply(message, status_panel, client=client)
     await message_deleter(message, msg)
 
 # =============================================================================
@@ -134,8 +135,8 @@ async def status_command(client, message):
 # Renamed in merged bot: /stats is owned by the anime core.
 @app.on_message(filters.command("sysstats") & filters.private)
 async def stats_command(client, message):
-    stats_text = f"{format_stats()}{sysINFO()}"
-    msg = await message.reply_text(stats_text, quote=True)
+    stats_panel = uikit.panel("📊 Statistics", format_stats() + sysINFO(), level=3)
+    msg = await uikit.reply(message, stats_panel, client=client)
     await message_deleter(message, msg)
 
 # =============================================================================
@@ -149,26 +150,37 @@ async def queue_command(client, message):
     items = Queue.list_items()
     current = Queue.current
 
-    text = "<b>📋 Download Queue</b>\n\n"
+    active_html = ""
     if current:
-        text += f"• 🔄 <b>Active:</b> <code>{current.get('name', 'Unknown')}</code>\n"
-        text += f"• 📦 <b>Links:</b> <code>{len(current.get('links', []))}</code>\n\n"
+        active_html = (
+            uikit.kv([
+                ("🔄 Active", uikit.code(current.get("name", "Unknown"))),
+                ("📦 Links", uikit.code(len(current.get("links", [])))),
+            ])
+        )
     else:
-        text += "<b>🔄 Active:</b> <code>None</code>\n\n"
+        active_html = uikit.note("No active task")
 
+    queue_html = ""
     if items:
-        for item in items:
-            text += f"{item}\n"
-        text += f"\n<b>📊 Total Queued:</b> <code>{Queue.size()}</code>"
+        queue_html = "".join(f"{item}\n" for item in items[:5])
+        if len(items) > 5:
+            queue_html += f"… and {len(items) - 5} more\n"
     else:
-        text += "<b>📭 Queue is empty</b>"
+        queue_html = uikit.note("📭 Queue is empty")
 
-    stats_text = "\n\n<b>─── Session Stats ───</b>\n"
-    stats_text += f"• Completed: <code>{BotStats.total_tasks}</code>\n"
-    stats_text += f"• Failed: <code>{BotStats.failed_tasks}</code>\n"
-    stats_text += f"• Downloaded: <code>{BotStats.total_downloaded}</code>\n"
-    stats_text += f"• Uploaded: <code>{BotStats.total_uploaded}</code>"
+    session_html = uikit.kv([
+        ("✅ Completed", uikit.code(BotStats.total_tasks)),
+        ("❌ Failed", uikit.code(BotStats.failed_tasks)),
+        ("⬇️ Downloaded", uikit.code(sizeUnit(BotStats.total_downloaded))),
+        ("⬆️ Uploaded", uikit.code(sizeUnit(BotStats.total_uploaded))),
+    ])
 
-    msg = await message.reply_text(text + stats_text, quote=True)
+    queue_panel = uikit.panel(
+        "📋 Download Queue",
+        active_html + queue_html + uikit.heading("📊 Session", level=4) + session_html,
+        level=3,
+    )
+    msg = await uikit.reply(message, queue_panel, client=client)
     await message_deleter(message, msg)
 
