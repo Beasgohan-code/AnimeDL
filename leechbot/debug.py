@@ -46,6 +46,11 @@ SUPPRESS_WINDOW = 600.0   # seconds an identical error fingerprint stays silent
 RESEND_EVERY = 25         # …but re-send every Nth repeat as a heartbeat
 MAX_TB_CHARS = 3200       # traceback chars kept inline before switching to a file
 MAX_ASYNC_TB_CHARS = 2400
+MAX_REPORTS_PER_MIN = 12  # global flood guard — dump channel stays readable
+BENIGN_EXC_NAMES = {      # not worth a Telegram report, ever
+    "MessageNotModified",   # edit with identical content — pure Telegram chatter
+    "MessageIdInvalid",     # message already gone while a task was finishing
+}
 
 _PROC_START = time.time()
 
@@ -164,6 +169,9 @@ class TelegramLogHandler(logging.Handler):
         self._queue = asyncio.Queue()
         self._running = False
         self._suppressed = {}  # fingerprint -> [repeat_count, monotonic_ts]
+        self._window_start = time.monotonic()
+        self._window_count = 0
+        self._dropped = 0      # reports suppressed by the 1-min flood guard
 
     # -- dedup ---------------------------------------------------------------
     def _fingerprint(self, record):
@@ -179,8 +187,17 @@ class TelegramLogHandler(logging.Handler):
         msg_text = record.getMessage() if hasattr(record, "getMessage") else str(record)
         if "QueryIdInvalid" in msg_text or "QUERY_ID_INVALID" in msg_text:
             return
+        exc = record.exc_info[1] if record.exc_info else None
+        if exc is not None and type(exc).__name__ in BENIGN_EXC_NAMES:
+            return
         try:
             now = time.monotonic()
+            if now - self._window_start > 60.0:
+                self._window_start, self._window_count = now, 0
+            if self._window_count >= MAX_REPORTS_PER_MIN:
+                self._dropped += 1
+                return
+            self._window_count += 1
             fp = self._fingerprint(record)
             entry = self._suppressed.get(fp)
             repeats = 0
@@ -269,6 +286,11 @@ class TelegramLogHandler(logging.Handler):
             rows.append(
                 ("🔁 Suppressed", uikit.code(f"+{repeats} repeats (10 min window)"))
             )
+        if self._dropped:
+            rows.append(
+                ("📦 Flood guard", uikit.code(f"+{self._dropped} more suppressed (1 min)"))
+            )
+            self._dropped = 0
 
         body = uikit.heading(f"{emoji} {record.levelname}", level=4) + uikit.kv(rows)
 
