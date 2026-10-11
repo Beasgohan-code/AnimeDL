@@ -1,5 +1,9 @@
 # ============================================================================
 #  AnimeDL — Docker image (anime downloader + leech engine)
+#  Base: python:3.11-slim (Debian trixie)
+#  NOTE: Debian trixie dropped the non-free `unrar` package; we install the
+#        free `unrar-free` + `unar` and ship a compatibility shim so the
+#        bot's `unrar x …` calls keep working (docker/unrar-wrapper.sh).
 # ============================================================================
 FROM python:3.11-slim
 
@@ -12,14 +16,18 @@ ENV PYTHONUNBUFFERED=1 \
 # System dependencies:
 #   ffmpeg        — video/audio processing (anime core + leech converter)
 #   aria2         — HTTP/FTP/torrent downloads (leech engine)
-#   p7zip/unrar   — archive handling
+#   p7zip-full    — zip/7z/tar archive handling
+#   unrar-free    — free RAR extraction (trixie has no non-free unrar)
+#   unar          — second free RAR/archiver fallback
+#   unzip         — zip extraction
 #   curl, tini    — health checks + proper PID 1 signal handling
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg \
         aria2 \
         p7zip-full \
-        unrar \
+        unrar-free \
+        unar \
         unzip \
         curl \
         tini \
@@ -32,8 +40,12 @@ RUN pip install -r requirements.txt
 
 COPY . .
 
-# Bundle the Linux N_m3u8DL-RE binary with exec permission
-RUN chmod +x binary/N_m3u8DL-RE || true
+# Bundle the N_m3u8DL-RE binary with exec permission and install the
+# unrar compatibility shim (bot code calls `unrar`, trixie only has
+# `unrar-free`)
+RUN chmod +x binary/N_m3u8DL-RE 2>/dev/null || true && \
+    chmod +x docker/unrar-wrapper.sh && \
+    ln -sf /app/docker/unrar-wrapper.sh /usr/local/bin/unrar
 
 EXPOSE 8080
 
