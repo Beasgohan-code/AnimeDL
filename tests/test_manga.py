@@ -278,7 +278,7 @@ results, tried = MS.search_all("solo")
 MS.get_provider = real_gp
 ok("one dead provider ≠ dead search", len(results) >= 1
    and any(pid == "comick" and isinstance(o, str) for pid, o in tried), str(tried))
-ok("8 default providers registered", len(MS.SEARCH_ORDER) == 8, str(MS.SEARCH_ORDER))
+ok("12 default providers registered", len(MS.SEARCH_ORDER) == 12, str(MS.SEARCH_ORDER))
 ok("CHAPTERS_ARG covers defaults", all(p in MS.CHAPTERS_ARG for p in MS.SEARCH_ORDER))
 ok("NSFW locked by default",
    all(pid not in ("manhwaclan", "manga18fx", "manhwa18") for pid, _ in tried))
@@ -304,7 +304,7 @@ ok("no third-party branding",
    not any(b in plug.lower() for b in ("codeflix", "abhinai", "dra-sama")))
 ok("help mentions /manga", "/manga" in Path(ROOT, "Script.py").read_text())
 from config import VERSION
-ok("VERSION == 4.22.0", VERSION == "4.22.0", VERSION)
+ok("VERSION == 4.22.0", VERSION == "4.23.0", VERSION)
 
 # ══ 11. LIVE probes (best-effort) ═══════════════════════════════════════════
 print("— live probes (best-effort)")
@@ -329,6 +329,142 @@ try:
     ok("LIVE asura search", len(r2) > 0, f"{len(r2)}")
 except Exception as e:
     print(f"  ⏭ live asura unreachable: {type(e).__name__}")
+
+# ══ 12. more.py — MangaKakalot / MangaSee / Mangabuddy / NineManga ══════════
+print("— more providers (mangakakalot, mangasee, mangabuddy, ninemanga)")
+import manga_sources.more as more
+
+mkk = more.MangaKakalotProvider()
+MKK_SEARCH = ('<a href="/manga/solo-bug"><img src="https://c.mkk/s.jpg" alt="Solo Bug"></a>'
+              '<a href="/manga/other-x"><img src="https://c.mkk/o.jpg" alt="Other X"></a>')
+more.http_get = lambda url, headers=None: type("R", (), {"text": MKK_SEARCH, "status_code": 200})()
+s = mkk.search("solo")
+ok("mangakakalot search", len(s) == 2 and s[0].title == "Solo Bug"
+   and s[0].url.endswith("/manga/solo-bug"), str(s)[:80])
+MKK_CH = ('<div class="chapter-list"><div class="row"><a href="/manga/solo-bug/chapter-14">Ch 14</a></div>'
+          '<div class="row"><a href="/manga/solo-bug/chapter-13.5">Ch 13.5</a></div></div>')
+more.http_get = lambda url, headers=None: type("R", (), {"text": MKK_CH, "status_code": 200})()
+chs = mkk.chapters("https://www.mangakakalot.gg/manga/solo-bug")
+ok("mangakakalot chapters", [c.number for c in chs] == ["14", "13.5"], str(chs)[:80])
+MKK_IMG = '<div class="container-chapter-reader"><img src="https://cm.mkki/1.webp"/><img src="https://cm.mkki/2.webp"/></div>'
+more.http_get = lambda url, headers=None: type("R", (), {"text": MKK_IMG, "status_code": 200})()
+urls, ref = mkk.images(chs[0])
+ok("mangakakalot images", urls == ["https://cm.mkki/1.webp", "https://cm.mkki/2.webp"], str(urls))
+
+mse = more.MangaseeProvider()
+more._post_json = lambda url, data=None: [
+    {"i": "Solo-Bug-Farmer", "s": "Solo Bug Farmer", "a": ["SBF"]},
+    {"i": "Other-X", "s": "Other X", "a": []}]
+s = mse.search("bug")
+ok("mangasee search (client-side filter)", len(s) == 1
+   and s[0].cover.endswith("/cover/Solo-Bug-Farmer.jpg"), str(s)[:80])
+MS_CH = ('vm.Chapters = [{"Chapter": "1140","Type":"Chapter"}'
+         ',{"Chapter": "11355","Type":"Chapter"}];'
+         'vm.IndexName = "Solo-Bug-Farmer";')
+more.http_get = lambda url, headers=None: type("R", (), {"text": MS_CH, "status_code": 200})()
+chs = mse.chapters("https://mangasee123.com/manga/Solo-Bug-Farmer")
+ok("mangasee chapter decode", [c.number for c in chs] == ["14", "135.5"]
+   and chs[0].url.endswith("/read-online/Solo-Bug-Farmer-chapter-14.html"), str(chs)[:100])
+MS_READ = ('vm.CurChapter = {"Chapter":"1140","Page":"2","Directory":""};'
+           'vm.CurPathName = "scans.mangasee.com";vm.IndexName = "Solo-Bug-Farmer";')
+more.http_get = lambda url, headers=None: type("R", (), {"text": MS_READ, "status_code": 200})()
+urls, ref = mse.images(chs[0])
+ok("mangasee image construction",
+   urls == ["https://scans.mangasee.com/manga/Solo-Bug-Farmer/14-001.png",
+            "https://scans.mangasee.com/manga/Solo-Bug-Farmer/14-002.png"], str(urls))
+
+mbd = more.MangabuddyProvider()
+MBD_SEARCH = ('<div class="book-item"><a href="/manga/solo-bug"><img data-src="https://img.mb/s.jpg" alt="Solo Bug"/></a></div>')
+more.http_get = lambda url, headers=None: type("R", (), {"text": MBD_SEARCH, "status_code": 200})()
+s = mbd.search("solo")
+ok("mangabuddy search", len(s) == 1 and s[0].url.endswith("/manga/solo-bug")
+   and s[0].title == "Solo Bug", str(s)[:80])
+MBD_CH = '<ul id="chapter-list"><li><a href="/manga/solo-bug/chapter-9"><strong class="chapter-title">Chapter 9</strong></a></li></ul>'
+more.http_get = lambda url, headers=None: type("R", (), {"text": MBD_CH, "status_code": 200})()
+chs = mbd.chapters("https://mangabuddy.com/manga/solo-bug")
+ok("mangabuddy chapters", [c.number for c in chs] == ["9"], str(chs)[:80])
+more.http_get = lambda url, headers=None: type("R", (), {"text": "var chapImages = 'https://i.mb/1.jpg,https://i.mb/2.jpg';", "status_code": 200})()
+urls, ref = mbd.images(chs[0])
+ok("mangabuddy chapImages", urls == ["https://i.mb/1.jpg", "https://i.mb/2.jpg"], str(urls))
+
+nmn = more.NinemangaProvider()
+NMN_SEARCH = ('<ul class="direlist"><li><a class="bookname" href="/manga/Solo+Bug"><img src="https://c.nm/s.jpg"/>Solo Bug</a></li></ul>')
+more.http_get = lambda url, headers=None: type("R", (), {"text": NMN_SEARCH, "status_code": 200})()
+s = nmn.search("solo")
+ok("ninemanga search", len(s) == 1 and s[0].url.endswith("/manga/Solo+Bug"), str(s)[:80])
+NMN_CH = '<div class="chapterbox"><li><a href="/manga/Solo+Bug/10/">Chapter 10</a></li></div>'
+more.http_get = lambda url, headers=None: type("R", (), {"text": NMN_CH, "status_code": 200})()
+chs = nmn.chapters("https://www.ninemanga.com/manga/Solo+Bug")
+ok("ninemanga chapters", [c.number for c in chs] == ["10"], str(chs)[:80])
+PAGES = ['<select id="page"><option value="/read/Solo+Bug/10/1"></option><option value="/read/Solo+Bug/10/2"></option></select><img class="manga_pic" src="https://pic.nm/1.jpg"/>',
+         '<img class="manga_pic" src="https://pic.nm/2.jpg"/>']
+more.http_get = lambda url, headers=None: type("R", (), {"text": PAGES[1] if url.endswith("/2") else PAGES[0], "status_code": 200})()
+urls, ref = nmn.images(chs[0])
+ok("ninemanga multi-page reader", urls == ["https://pic.nm/1.jpg", "https://pic.nm/2.jpg"], str(urls))
+
+ok("CHAPTERS_ARG covers new providers",
+   all(p in MS.CHAPTERS_ARG for p in ("mangakakalot", "mangasee", "mangabuddy", "ninemanga")))
+ok("15 providers registered", len(MS.PROVIDER_NAMES) == 15, str(len(MS.PROVIDER_NAMES)))
+
+# ══ 13. NSFW premium gating (search flag + plugin guards) ═══════════════════
+print("— NSFW premium gating")
+os.environ["ANIMEDL_MANGA_NSFW"] = "1"
+res2, tried2 = MS.search_all("solo", nsfw=False)
+ok("search_all(nsfw=False) skips 18+",
+   all(pid not in MS.NSFW_IDS for pid, _ in tried2), str([p for p, _ in tried2]))
+res3, tried3 = MS.search_all("solo", nsfw=True)
+ok("search_all(nsfw=True) tries 18+ (env on)",
+   any(pid == "manga18fx" for pid, _ in tried3), str([p for p, _ in tried3]))
+os.environ["ANIMEDL_MANGA_NSFW"] = "0"
+res4, tried4 = MS.search_all("solo", nsfw=True)
+ok("env OFF overrides nsfw=True flag",
+   all(pid not in MS.NSFW_IDS for pid, _ in tried4))
+
+import asyncio as _aio
+import cantarella.telegram.plugins.manga as mplug
+async def _gate_check():
+    # db unreachable -> premium False -> nsfw never allowed
+    return (await mplug._nsfw_allowed(42), await mplug._default_fmt(42))
+_loop = _aio.get_event_loop()
+gate, dfmt = _loop.run_until_complete(_gate_check())
+ok("_nsfw_allowed denies without premium/db", gate is False)
+ok("_default_fmt falls back to pdf", dfmt == "pdf")
+
+class _FakeDB:
+    def __init__(self, prem, show, fmt):
+        self.prem, self.show, self.fmt = prem, show, fmt
+    async def is_premium(self, uid): return self.prem
+    async def get_user_setting(self, uid, key, default=None):
+        return {"show_nsfw": self.show, "manga_format": self.fmt}.get(key, default)
+    async def premium_until(self, uid): return "2027-01-01T00:00:00"
+import cantarella.core.database as cdb
+_real_db = cdb.db
+cdb.db = _FakeDB(prem=True, show=True, fmt="cbz")
+os.environ["ANIMEDL_MANGA_NSFW"] = "1"
+gate2 = _loop.run_until_complete(mplug._nsfw_allowed(42))
+cdb.db = _FakeDB(prem=False, show=True, fmt="cbz")
+gate3 = _loop.run_until_complete(mplug._nsfw_allowed(42))
+os.environ["ANIMEDL_MANGA_NSFW"] = "0"
+cdb.db = _FakeDB(prem=True, show=True, fmt="cbz")
+gate4 = _loop.run_until_complete(mplug._nsfw_allowed(42))
+cdb.db = _real_db
+ok("premium + opt-in + env -> nsfw on", gate2 is True)
+ok("no premium -> nsfw off", gate3 is False)
+ok("env off -> nsfw off even premium", gate4 is False)
+
+# usettings builders are pure functions — verify shapes
+import cantarella.telegram.plugins.usettings as us
+mk_free = us._settings_markup({"fmt": "pdf", "nsfw": False, "premium": False, "until": ""})
+mk_prem = us._settings_markup({"fmt": "cbz", "nsfw": True, "premium": True, "until": "2027-01-01"})
+_free_labels = [b.text for row in mk_free.inline_keyboard for b in row]
+_prem_labels = [b.text for row in mk_prem.inline_keyboard for b in row]
+ok("usettings hides toggle for free users",
+   any("ᴘʀᴇᴍɪᴜᴍ ᴏɴʟʏ" in l for l in _free_labels)
+   and not any(l.startswith("🔞 18+ ꜱᴏᴜʀᴄᴇꜱ: ᴏɴ") for l in _free_labels))
+ok("usettings shows toggle for premium",
+   any("🔞" in l for l in _prem_labels))
+txt_free = us._settings_text({"fmt": "pdf", "nsfw": False, "premium": False, "until": ""})
+ok("usettings text renders", "ᴘᴅꜰ" in txt_free and "ᴏꜰꜰ" in txt_free)
 
 n_fail = sum(1 for _, c in PASS if not c)
 print(f"\n═══ test_manga: {len(PASS) - n_fail}/{len(PASS)} passed ═══")

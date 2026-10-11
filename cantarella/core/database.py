@@ -59,6 +59,11 @@ class Database:
                 ban_duration=0,
                 banned_on=date.max.isoformat(),
                 ban_reason="",
+            ),
+            premium_status=dict(
+                is_premium=False,
+                premium_until="",
+                granted_on="",
             )
         )
 
@@ -129,6 +134,131 @@ class Database:
         except Exception as e:
             logging.error(f"ᴇʀʀᴏʀ ᴄʜᴇᴄᴋɪɴɢ ʙᴀɴ ꜰᴏʀ {user_id}: {e}")
             return False
+
+    async def ban_user(self, user_id: int, reason: str = "") -> bool:
+        if self.ban_data is None:
+            return False
+        try:
+            await self.ban_data.update_one(
+                {"_id": int(user_id)},
+                {"$set": {"ban_status": dict(
+                    is_banned=True,
+                    ban_duration=0,
+                    banned_on=date.today().isoformat(),
+                    ban_reason=reason or "")}},
+                upsert=True)
+            return True
+        except Exception as e:
+            logging.error(f"ᴇʀʀᴏʀ ʙᴀɴɴɪɴɢ {user_id}: {e}")
+            return False
+
+    async def unban_user(self, user_id: int) -> bool:
+        if self.ban_data is None:
+            return False
+        try:
+            await self.ban_data.update_one(
+                {"_id": int(user_id)},
+                {"$set": {"ban_status": dict(
+                    is_banned=False,
+                    ban_duration=0,
+                    banned_on=date.max.isoformat(),
+                    ban_reason="")}},
+                upsert=True)
+            return True
+        except Exception as e:
+            logging.error(f"ᴇʀʀᴏʀ ᴜɴʙᴀɴɴɪɴɢ {user_id}: {e}")
+            return False
+
+    async def banned_users(self) -> list:
+        if self.ban_data is None:
+            return []
+        try:
+            out = []
+            async for u in self.ban_data.find({"ban_status.is_banned": True}):
+                out.append(u)
+            return out
+        except Exception as e:
+            logging.error(f"ᴇʀʀᴏʀ ʟɪꜱᴛɪɴɢ ʙᴀɴꜱ: {e}")
+            return []
+
+    # ══════════════════════════════════════════════════════
+    #  PREMIUM (💎 — unlocks 18+ manga/manhua sources)
+    # ══════════════════════════════════════════════════════
+
+    async def is_premium(self, user_id: int) -> bool:
+        if self.user_data is None:
+            return False
+        try:
+            user = await self.user_data.find_one({"_id": int(user_id)})
+            p = (user or {}).get("premium_status") or {}
+            if not p.get("is_premium"):
+                return False
+            until = p.get("premium_until") or ""
+            if until and until != date.max.isoformat():
+                from datetime import datetime as _dt
+                try:
+                    if _dt.strptime(until, "%Y-%m-%d").date() < date.today():
+                        return False
+                except ValueError:
+                    pass
+            return True
+        except Exception as e:
+            logging.error(f"ᴇʀʀᴏʀ ᴄʜᴇᴄᴋɪɴɢ ᴘʀᴇᴍɪᴜᴍ ꜰᴏʀ {user_id}: {e}")
+            return False
+
+    async def premium_until(self, user_id: int) -> str:
+        if self.user_data is None:
+            return ""
+        try:
+            user = await self.user_data.find_one({"_id": int(user_id)})
+            return ((user or {}).get("premium_status") or {}).get(
+                "premium_until") or ""
+        except Exception:
+            return ""
+
+    async def set_premium(self, user_id: int, days: int = 30) -> bool:
+        if self.user_data is None:
+            return False
+        try:
+            from datetime import timedelta
+            until = date.today() + timedelta(days=max(1, int(days)))
+            await self.user_data.update_one(
+                {"_id": int(user_id)},
+                {"$set": {"premium_status": dict(
+                    is_premium=True,
+                    premium_until=until.isoformat(),
+                    granted_on=date.today().isoformat())}},
+                upsert=True)
+            return True
+        except Exception as e:
+            logging.error(f"ᴇʀʀᴏʀ ꜱᴇᴛᴛɪɴɢ ᴘʀᴇᴍɪᴜᴍ {user_id}: {e}")
+            return False
+
+    async def remove_premium(self, user_id: int) -> bool:
+        if self.user_data is None:
+            return False
+        try:
+            await self.user_data.update_one(
+                {"_id": int(user_id)},
+                {"$set": {"premium_status": dict(
+                    is_premium=False, premium_until="", granted_on="")}})
+            return True
+        except Exception as e:
+            logging.error(f"ᴇʀʀᴏʀ ʀᴇᴍᴏᴠɪɴɢ ᴘʀᴇᴍɪᴜᴍ {user_id}: {e}")
+            return False
+
+    async def list_premium(self) -> list:
+        if self.user_data is None:
+            return []
+        try:
+            out = []
+            async for u in self.user_data.find(
+                    {"premium_status.is_premium": True}):
+                out.append(u)
+            return out
+        except Exception as e:
+            logging.error(f"ᴇʀʀᴏʀ ʟɪꜱᴛɪɴɢ ᴘʀᴇᴍɪᴜᴍ: {e}")
+            return []
 
     # ══════════════════════════════════════════════════════
     #  MAPPED CHANNELS

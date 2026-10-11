@@ -21,6 +21,7 @@ from pyrogram.enums import ParseMode
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from config import VERSION
+from cantarella.telegram.decorators import check_ban
 
 logger = logging.getLogger(__name__)
 
@@ -35,27 +36,67 @@ def _search_state(user_id):
     return (user_manga.get(user_id) or {}).get("results") or []
 
 
+async def _premium_ok(user_id: int) -> bool:
+    """💎 premium check — tolerant when mongo is unreachable."""
+    try:
+        from cantarella.core.database import db
+        return bool(await db.is_premium(user_id))
+    except Exception:
+        return False
+
+
+async def _nsfw_allowed(user_id: int) -> bool:
+    """18+ sources need: operator env ON + user premium + user opted in."""
+    try:
+        from manga_sources.nsfw import nsfw_enabled
+        if not nsfw_enabled():
+            return False
+    except Exception:
+        return False
+    if not await _premium_ok(user_id):
+        return False
+    try:
+        from cantarella.core.database import db
+        return bool(await db.get_user_setting(user_id, "show_nsfw", False))
+    except Exception:
+        return False
+
+
+async def _default_fmt(user_id: int) -> str:
+    try:
+        from cantarella.core.database import db
+        fmt = await db.get_user_setting(user_id, "manga_format", "pdf")
+        return "cbz" if fmt == "cbz" else "pdf"
+    except Exception:
+        return "pdf"
+
+
 # ─────────────────────────────────────────────
 #  /manga — search
 # ─────────────────────────────────────────────
 @Client.on_message(filters.private & filters.command("manga"))
+@check_ban
 async def manga_search_cmd(client: Client, message):
+    uid = message.from_user.id
     query = (message.text or "").split(None, 1)[1].strip() if len((message.text or "").split()) > 1 else ""
     if not query:
         return await message.reply(
             "<blockquote>📖 <b>ᴍᴀɴɢᴀ ꜱᴇᴀʀᴄʜ</b>\n\n"
             "ᴜꜱᴀɢᴇ: <code>/manga solo leveling</code>\n\n"
-            "ꜱᴏᴜʀᴄᴇꜱ: ᴍᴀɴɢᴀᴅᴇx · ᴄᴏᴍɪᴄᴋ · ᴀꜱᴜʀᴀ ꜱᴄᴀɴꜱ\n"
+            "ꜱᴏᴜʀᴄᴇꜱ: ᴍᴀɴɢᴀᴅᴇx · ᴄᴏᴍɪᴄᴋ · ᴀꜱᴜʀᴀ · ᴡᴇᴇʙᴄᴇɴᴛʀᴀʟ · ᴍɢᴇᴋᴏ + 7 ᴍᴏʀᴇ\n"
             "ᴏᴜᴛᴘᴜᴛ: 📄 ᴘᴅꜰ ᴏʀ 📚 ᴄʙᴢ ᴘᴇʀ ᴄʜᴀᴘᴛᴇʀ</blockquote>",
             parse_mode=ParseMode.HTML)
 
+    include_nsfw = await _nsfw_allowed(uid)
+    pref_fmt = await _default_fmt(uid)
     status = await message.reply(
-        f"<blockquote>🔎 ꜱᴇᴀʀᴄʜɪɴɢ <b>{query[:40]}</b> ᴏɴ ᴍᴀɴɢᴀᴅᴇx · ᴄᴏᴍɪᴄᴋ · ᴀꜱᴜʀᴀ…</blockquote>",
+        f"<blockquote>🔎 ꜱᴇᴀʀᴄʜɪɴɢ <b>{query[:40]}</b> ᴏɴ 12 ꜱᴏᴜʀᴄᴇꜱ"
+        + (" + 🔞" if include_nsfw else "") + "…</blockquote>",
         parse_mode=ParseMode.HTML)
 
     def _work():
         from manga_sources import search_all
-        return search_all(query)
+        return search_all(query, nsfw=include_nsfw)
 
     try:
         results, tried = await asyncio.get_event_loop().run_in_executor(None, _work)
@@ -65,6 +106,7 @@ async def manga_search_cmd(client: Client, message):
 
     user_manga[message.from_user.id] = {
         "query": query, "results": results, "mangas": {}, "chapters": {},
+        "pref_fmt": pref_fmt,
     }
     if not results:
         tried_line = " · ".join(
@@ -105,6 +147,10 @@ async def on_manga_pick(client: Client, cq):
     if idx >= len(results):
         return await cq.answer("❌ ꜱᴛᴀʟᴇ ʟɪɴᴋ.", show_alert=True)
     manga = results[idx]
+    from manga_sources import NSFW_IDS
+    if manga.provider in NSFW_IDS and not await _premium_ok(user_id):
+        return await cq.answer(
+            "🔒 18+ ꜱᴏᴜʀᴄᴇ — 💎 ᴘʀᴇᴍɪᴜᴍ ʀᴇǫᴜɪʀᴇᴅ (/premium).", show_alert=True)
 
     await cq.answer("📚 ʟᴏᴀᴅɪɴɢ ᴄʜᴀᴘᴛᴇʀꜱ…")
     try:
@@ -146,14 +192,22 @@ async def _render_chapters(cq, user_id, key, page):
     chunk = chapters[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
 
     buttons = []
+    pref = state.get("pref_fmt")
     for j, ch in enumerate(chunk):
         label = f"📑 Ch {ch.number}" + (f" · {ch.title[:22]}" if ch.title else "")
-        fmt = "cbz"
-        buttons.append([
-            InlineKeyboardButton(label[:52], callback_data=f"mgi_{key}_{page}_{j}"),
-            InlineKeyboardButton("📄", callback_data=f"mgd_{key}_{page}_{j}_pdf"),
-            InlineKeyboardButton("📚", callback_data=f"mgd_{key}_{page}_{j}_cbz"),
-        ])
+        if pref in ("pdf", "cbz"):
+            alt = "pdf" if pref == "cbz" else "cbz"
+            buttons.append([
+                InlineKeyboardButton(label[:52], callback_data=f"mgi_{key}_{page}_{j}"),
+                InlineKeyboardButton(f"⬇️ {pref.upper()}", callback_data=f"mgd_{key}_{page}_{j}_{pref}"),
+                InlineKeyboardButton("📄" if alt == "pdf" else "📚", callback_data=f"mgd_{key}_{page}_{j}_{alt}"),
+            ])
+        else:
+            buttons.append([
+                InlineKeyboardButton(label[:52], callback_data=f"mgi_{key}_{page}_{j}"),
+                InlineKeyboardButton("📄", callback_data=f"mgd_{key}_{page}_{j}_pdf"),
+                InlineKeyboardButton("📚", callback_data=f"mgd_{key}_{page}_{j}_cbz"),
+            ])
     nav = []
     if page > 0:
         nav.append(InlineKeyboardButton("⬅️", callback_data=f"mgc_{key}_{page-1}"))
@@ -251,6 +305,10 @@ async def on_manga_download(client: Client, cq):
     if idx >= len(chapters) or manga is None:
         return await cq.answer("❌ ꜱᴛᴀʟᴇ ʟɪɴᴋ.", show_alert=True)
     chapter = chapters[idx]
+    from manga_sources import NSFW_IDS
+    if manga.provider in NSFW_IDS and not await _premium_ok(user_id):
+        return await cq.answer(
+            "🔒 18+ ꜱᴏᴜʀᴄᴇ — 💎 ᴘʀᴇᴍɪᴜᴍ ʀᴇǫᴜɪʀᴇᴅ (/premium).", show_alert=True)
 
     await cq.answer(f"⬇️ ꜰᴇᴛᴄʜɪɴɢ ᴄʜ {chapter.number}…")
     _busy.add(user_id)

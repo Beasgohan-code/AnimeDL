@@ -64,6 +64,18 @@ def get_provider(pid: str):
     if pid == "templetoons":
         from manga_sources.wpmanga import TempleToonsProvider
         return TempleToonsProvider()
+    if pid == "mangakakalot":
+        from manga_sources.more import MangaKakalotProvider
+        return MangaKakalotProvider()
+    if pid == "mangasee":
+        from manga_sources.more import MangaseeProvider
+        return MangaseeProvider()
+    if pid == "mangabuddy":
+        from manga_sources.more import MangabuddyProvider
+        return MangabuddyProvider()
+    if pid == "ninemanga":
+        from manga_sources.more import NinemangaProvider
+        return NinemangaProvider()
     if pid in ("manhwaclan", "manga18fx", "manhwa18"):
         # 18+ sources: only when the operator opts in via env (public bot)
         from manga_sources.nsfw import nsfw_enabled
@@ -85,17 +97,26 @@ PROVIDER_NAMES = {
     "manhwaclan": "ManhwaClan",
     "manga18fx": "Manga18FX",
     "manhwa18": "Manhwa18",
+    "mangakakalot": "MangaKakalot",
+    "mangasee": "MangaSee",
+    "mangabuddy": "Mangabuddy",
+    "ninemanga": "NineManga",
 }
+
+# 18+ provider ids (searched/downloaded only when the operator enabled them
+# via env AND the requesting user holds premium)
+NSFW_IDS = ("manhwaclan", "manga18fx", "manhwa18")
 
 # default search order (SFW sources first; 18+ appended only when enabled)
 SEARCH_ORDER = ("mangadex", "comick", "asura", "weebcentral", "mgeko",
-                "manhuafast", "manhuaplus", "templetoons")
+                "manhuafast", "manhuaplus", "templetoons",
+                "mangakakalot", "mangasee", "mangabuddy", "ninemanga")
 
 
-def _search_order() -> tuple:
+def _search_order(nsfw: bool = False) -> tuple:
     from manga_sources.nsfw import nsfw_enabled
-    if nsfw_enabled():
-        return SEARCH_ORDER + ("manhwaclan", "manga18fx", "manhwa18")
+    if nsfw and nsfw_enabled():
+        return SEARCH_ORDER + tuple(NSFW_IDS)
     return SEARCH_ORDER
 
 
@@ -109,17 +130,22 @@ CHAPTERS_ARG = {
     "manhuafast": "url",
     "manhuaplus": "id",     # id carries the resolved series url
     "templetoons": "url",
+    "mangakakalot": "url",
+    "mangasee": "url",
+    "mangabuddy": "url",
+    "ninemanga": "url",
     "manhwaclan": "url",
     "manga18fx": "url",
     "manhwa18": "url",
 }
 
 
-def search_all(query: str, per_provider: int = 6) -> tuple:
+def search_all(query: str, per_provider: int = 6, nsfw: bool = False) -> tuple:
     """Search every provider; returns (results, tried) where tried is
-    [(provider_id, n_or_error)] so the UI can show health per source."""
+    [(provider_id, n_or_error)] so the UI can show health per source.
+    nsfw=True additionally queries the 18+ sources (env-gated too)."""
     results, tried = [], []
-    for pid in _search_order():
+    for pid in _search_order(nsfw):
         try:
             prov = get_provider(pid)
             found = prov.search(query)[:per_provider]

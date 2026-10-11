@@ -286,3 +286,122 @@ async def handle_broadcast(client: Client, message):
 @Client.on_message(filters.private & filters.command("broadcast") & admin & ~filters.reply)
 async def handle_broadcast_no_reply(client: Client, message):
     await message.reply("<blockquote>❌ ᴘʟᴇᴀꜱᴇ ʀᴇᴘʟʏ ᴛᴏ ᴀ ᴍᴇꜱꜱᴀɢᴇ ᴛᴏ ʙʀᴏᴀᴅᴄᴀꜱᴛ ɪᴛ.</blockquote>", parse_mode=ParseMode.HTML)
+
+
+# ═══════════════════════════════════════════════════════════
+#  BAN / UNBAN / BANLIST  — /ban <id|reply> [reason] · /unban · /banlist
+# ═══════════════════════════════════════════════════════════
+
+def _target_id(message):
+    """user id from the command args or from a replied-to message."""
+    parts = list(message.command)
+    if len(parts) >= 2:
+        try:
+            return int(parts[1]), " ".join(parts[2:])
+        except ValueError:
+            return None, ""
+    if message.reply_to_message and message.reply_to_message.from_user:
+        return message.reply_to_message.from_user.id, ""
+    return None, ""
+
+
+@Client.on_message(filters.private & filters.command("ban") & admin)
+async def handle_ban(client: Client, message):
+    uid, reason = _target_id(message)
+    if uid is None:
+        return await message.reply(
+            "<blockquote>❌ ᴜꜱᴀɢᴇ: <code>/ban 123456789 ꜱᴘᴀᴍᴍɪɴɢ</code> (ᴏʀ ʀᴇᴘʟʏ ᴛᴏ ᴀ ᴜꜱᴇʀ)</blockquote>",
+            parse_mode=ParseMode.HTML)
+    if uid == OWNER_ID:
+        return await message.reply("<blockquote>❌ ᴄᴀɴ'ᴛ ʙᴀɴ ᴛʜᴇ ᴏᴡɴᴇʀ.</blockquote>", parse_mode=ParseMode.HTML)
+    ok = await db.ban_user(uid, reason)
+    if ok:
+        return await message.reply(
+            f"<blockquote>🔨 <b>ʙᴀɴɴᴇᴅ</b> <code>{uid}</code>"
+            + (f"\nʀᴇᴀꜱᴏɴ: <i>{reason[:100]}</i>" if reason else "")
+            + "</blockquote>", parse_mode=ParseMode.HTML)
+    await message.reply("<blockquote>❌ ᴅᴀᴛᴀʙᴀꜱᴇ ᴇʀʀᴏʀ — ʙᴀɴ ɴᴏᴛ ꜱᴀᴠᴇᴅ.</blockquote>", parse_mode=ParseMode.HTML)
+
+
+@Client.on_message(filters.private & filters.command("unban") & admin)
+async def handle_unban(client: Client, message):
+    uid, _ = _target_id(message)
+    if uid is None:
+        return await message.reply(
+            "<blockquote>❌ ᴜꜱᴀɢᴇ: <code>/unban 123456789</code> (ᴏʀ ʀᴇᴘʟʏ ᴛᴏ ᴀ ᴜꜱᴇʀ)</blockquote>",
+            parse_mode=ParseMode.HTML)
+    ok = await db.unban_user(uid)
+    if ok:
+        return await message.reply(
+            f"<blockquote>🕊 <b>ᴜɴʙᴀɴɴᴇᴅ</b> <code>{uid}</code></blockquote>",
+            parse_mode=ParseMode.HTML)
+    await message.reply("<blockquote>❌ ᴅᴀᴛᴀʙᴀꜱᴇ ᴇʀʀᴏʀ — ᴜɴʙᴀɴ ɴᴏᴛ ꜱᴀᴠᴇᴅ.</blockquote>", parse_mode=ParseMode.HTML)
+
+
+@Client.on_message(filters.private & filters.command("banlist") & admin)
+async def handle_banlist(client: Client, message):
+    banned = await db.banned_users()
+    if not banned:
+        return await message.reply("<blockquote>📋 ɴᴏ ʙᴀɴɴᴇᴅ ᴜꜱᴇʀꜱ.</blockquote>", parse_mode=ParseMode.HTML)
+    lines = [f"• <code>{u['_id']}</code>" + (f" — <i>{(u.get('ban_status') or {}).get('ban_reason', '')[:60]}</i>"
+                                              if (u.get('ban_status') or {}).get('ban_reason') else "")
+             for u in banned[:25]]
+    await message.reply(
+        f"<blockquote>🔨 <b>ʙᴀɴɴᴇᴅ ᴜꜱᴇʀꜱ ({len(banned)}):</b>\n" + "\n".join(lines) + "</blockquote>",
+        parse_mode=ParseMode.HTML)
+
+
+# ═══════════════════════════════════════════════════════════
+#  PREMIUM ADMIN — /addpremium <id> [days] · /delpremium <id> · /premiumlist
+# ═══════════════════════════════════════════════════════════
+
+@Client.on_message(filters.private & filters.command("addpremium") & admin)
+async def handle_addpremium(client: Client, message):
+    parts = list(message.command)
+    if len(parts) < 2:
+        return await message.reply(
+            "<blockquote>❌ ᴜꜱᴀɢᴇ: <code>/addpremium 123456789 30</code> (ᴅᴀʏꜱ, ᴅᴇꜰᴀᴜʟᴛ 30)</blockquote>",
+            parse_mode=ParseMode.HTML)
+    try:
+        uid = int(parts[1])
+    except ValueError:
+        return await message.reply("<blockquote>❌ ɪɴᴠᴀʟɪᴅ ᴜꜱᴇʀ ɪᴅ.</blockquote>", parse_mode=ParseMode.HTML)
+    days = 30
+    if len(parts) >= 3:
+        try:
+            days = max(1, int(parts[2]))
+        except ValueError:
+            pass
+    ok = await db.set_premium(uid, days)
+    if ok:
+        from datetime import date, timedelta
+        until = (date.today() + timedelta(days=days)).isoformat()
+        return await message.reply(
+            f"<blockquote>💎 <b>ᴘʀᴇᴍɪᴜᴍ ᴀᴡᴀʀᴅᴇᴅ</b>\nᴜꜱᴇʀ: <code>{uid}</code>\nᴜɴᴛɪʟ: <b>{until}</b> ({days}ᴅ)</blockquote>",
+            parse_mode=ParseMode.HTML)
+    await message.reply("<blockquote>❌ ᴅᴀᴛᴀʙᴀꜱᴇ ᴇʀʀᴏʀ — ᴘʀᴇᴍɪᴜᴍ ɴᴏᴛ ꜱᴀᴠᴇᴅ.</blockquote>", parse_mode=ParseMode.HTML)
+
+
+@Client.on_message(filters.private & filters.command("delpremium") & admin)
+async def handle_delpremium(client: Client, message):
+    uid, _ = _target_id(message)
+    if uid is None:
+        return await message.reply(
+            "<blockquote>❌ ᴜꜱᴀɢᴇ: <code>/delpremium 123456789</code></blockquote>", parse_mode=ParseMode.HTML)
+    ok = await db.remove_premium(uid)
+    if ok:
+        return await message.reply(
+            f"<blockquote>🧹 <b>ᴘʀᴇᴍɪᴜᴍ ʀᴇᴠᴏᴋᴇᴅ</b> <code>{uid}</code></blockquote>", parse_mode=ParseMode.HTML)
+    await message.reply("<blockquote>❌ ᴅᴀᴛᴀʙᴀꜱᴇ ᴇʀʀᴏʀ.</blockquote>", parse_mode=ParseMode.HTML)
+
+
+@Client.on_message(filters.private & filters.command("premiumlist") & admin)
+async def handle_premiumlist(client: Client, message):
+    prem = await db.list_premium()
+    if not prem:
+        return await message.reply("<blockquote>📋 ɴᴏ ᴘʀᴇᴍɪᴜᴍ ᴜꜱᴇʀꜱ.</blockquote>", parse_mode=ParseMode.HTML)
+    lines = [f"• <code>{u['_id']}</code> — ᴜɴᴛɪʟ <b>{((u.get('premium_status') or {}).get('premium_until') or '?')[:10]}</b>"
+             for u in prem[:25]]
+    await message.reply(
+        f"<blockquote>💎 <b>ᴘʀᴇᴍɪᴜᴍ ᴜꜱᴇʀꜱ ({len(prem)}):</b>\n" + "\n".join(lines) + "</blockquote>",
+        parse_mode=ParseMode.HTML)
