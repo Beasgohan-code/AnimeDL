@@ -393,7 +393,7 @@ ok("dockerfile installs ffmpeg", "ffmpeg" in Path(ROOT, "Dockerfile").read_text(
 ok("requirements imageio-ffmpeg",
    "imageio-ffmpeg" in Path(ROOT, "requirements.txt").read_text())
 from config import VERSION
-ok("VERSION == 4.20.1", VERSION == "4.20.2", VERSION)
+ok("VERSION == 4.20.1", VERSION == "4.21.0", VERSION)
 
 n_fail = sum(1 for _, c in PASS if not c)
 print(f"\n═══ test_v4202: {len(PASS) - n_fail}/{len(PASS)} passed ═══")
