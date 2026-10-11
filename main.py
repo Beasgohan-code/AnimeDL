@@ -166,13 +166,35 @@ async def _resolve_peer(peer_id, label: str):
 # ---------------------------------------------------------------------------
 # Startup
 # ---------------------------------------------------------------------------
+def _log_target():
+    """Where lifecycle/alert posts go — one unified chain for the whole bot.
+
+    Users historically only set DUMP_ID (error reports), so announcements
+    that looked only at LOG_CHANNEL silently went nowhere. Every notifier
+    now resolves the same way: LOG_CHANNEL → DUMP_ID → OWNER_ID.
+    Returns (chat_id or None, source_name).
+    """
+    for name in ("LOG_CHANNEL", "DUMP_ID", "OWNER_ID"):
+        raw = getattr(config, name, None)
+        if not raw:
+            continue
+        try:
+            cid = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if cid:
+            return cid, name
+    return None, None
+
+
 async def _announce(text: str):
-    """Post a lifecycle event (start/stop) to LOG_CHANNEL. Non-fatal."""
-    if not config.LOG_CHANNEL:
-        return
-    try:
-        target = int(config.LOG_CHANNEL)
-    except (TypeError, ValueError):
+    """Post a lifecycle event (start/stop/restart) to the log target. Non-fatal."""
+    target, source = _log_target()
+    if target is None:
+        logger.warning(
+            "📣 Lifecycle post skipped — set LOG_CHANNEL (or DUMP_ID) in your "
+            "Render environment to see start/stop posts in Telegram"
+        )
         return
     try:
         await asyncio.wait_for(
@@ -180,7 +202,7 @@ async def _announce(text: str):
             timeout=8,
         )
     except Exception as e:
-        logger.debug("lifecycle announce failed: %s", e)
+        logger.debug("lifecycle announce failed (%s): %s", source, e)
 
 
 async def run():
@@ -252,6 +274,11 @@ async def run():
     reliability.start(app)
 
     logger.info("🚀 AnimeDL v%s fully started", config.VERSION)
+    _lt, _lsrc = _log_target()
+    if _lt is None:
+        logger.warning("📣 No LOG_CHANNEL / DUMP_ID set — start/stop posts disabled")
+    else:
+        logger.warning("📣 Lifecycle posts (start/stop/errors) → %s (via %s)", _lt, _lsrc)
 
     # Lifecycle → Telegram log channel (visible on the phone, not just Render)
     _dash = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")

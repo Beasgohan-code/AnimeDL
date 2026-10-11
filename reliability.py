@@ -268,12 +268,19 @@ class Watchdog:
         if now - self._last_alert.get(key, 0) < ALERT_COOLDOWN:
             return
         self._last_alert[key] = now
-        target = config.LOG_CHANNEL or config.OWNER_ID
+        # same unified chain as lifecycle announcements (main._log_target):
+        # users often only set DUMP_ID, so LOG_CHANNEL-only lookups went dark
+        target = None
+        for _name in ("LOG_CHANNEL", "DUMP_ID", "OWNER_ID"):
+            _raw = getattr(config, _name, None)
+            if _raw:
+                try:
+                    target = int(_raw)
+                except (TypeError, ValueError):
+                    target = None
+                if target:
+                    break
         if not target:
-            return
-        try:
-            target = int(target)
-        except (TypeError, ValueError):
             return
         panel = uikit.panel(
             title,
