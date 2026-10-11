@@ -387,6 +387,8 @@ async def on_start_range_dl(client: Client, callback_query):
         parse_mode=ParseMode.HTML
     )
     range_t0 = time.time()
+    range_ok = 0
+    range_fail = 0
 
     quality_priority = {"360": 1, "720": 2, "1080": 3, "auto": 4}
     qualities.sort(key=lambda q: quality_priority.get(q, 99))
@@ -400,9 +402,11 @@ async def on_start_range_dl(client: Client, callback_query):
         for q in qualities:
             first_id = None
             last_id = None
-            results_list = await run_episode_batch(
+            results_list, ok_n, fail_n = await run_episode_batch(
                 client, None, ep_chunk, q, target_chat, progress_msg=status_msg
             )
+            range_ok += ok_n
+            range_fail += fail_n
             ep_msgs = [m for ms in results_list for m in ms]
             if ep_msgs:
                 all_chunk_msgs.extend(ep_msgs)
@@ -418,7 +422,25 @@ async def on_start_range_dl(client: Client, callback_query):
             await post_to_main_channel(client, ep_chunk[0]['url'], all_chunk_msgs, quality_map, batch_ep_range=ep_range_str)
 
     _took = int(time.time() - range_t0)
-    await status_msg.edit_text(f"<blockquote>✅ <b>ʀᴀɴɢᴇ ᴅᴏᴡɴʟᴏᴀᴅ ᴄᴏᴍᴘʟᴇᴛᴇ!</b>\n⏱ ᴛᴏᴏᴋ: {_took//60}ᴍ {_took%60:02d}ꜱ</blockquote>", parse_mode=ParseMode.HTML)
+    try:
+        _chat = await client.get_chat(target_chat)
+        _where = f"📍 ꜰɪʟᴇꜱ ɪɴ: <b>{getattr(_chat, 'title', None) or getattr(_chat, 'first_name', target_chat)}</b>"
+    except Exception:
+        _where = f"📍 ꜰɪʟᴇꜱ ɪɴ: <code>{target_chat}</code>"
+    if range_ok:
+        await status_msg.edit_text(
+            f"<blockquote>✅ <b>ʀᴀɴɢᴇ ᴅᴏᴡɴʟᴏᴀᴅ ᴄᴏᴍᴘʟᴇᴛᴇ!</b>\n"
+            f"📦 ᴇᴘɪꜱᴏᴅᴇꜱ: ✅ {range_ok}" + (f" · ❌ {range_fail}" if range_fail else "") +
+            f"\n⏱ ᴛᴏᴏᴋ: {_took//60}ᴍ {_took%60:02d}ꜱ\n{_where}</blockquote>",
+            parse_mode=ParseMode.HTML
+        )
+    else:
+        await status_msg.edit_text(
+            f"<blockquote>❌ <b>ʀᴀɴɢᴇ ꜰᴀɪʟᴇᴅ — ɴᴏᴛʜɪɴɢ ᴡᴀꜱ ᴜᴘʟᴏᴀᴅᴇᴅ.</b>\n"
+            f"⏱ ᴀғᴛᴇʀ {_took//60}ᴍ {_took%60:02d}ꜱ\n"
+            f"💡 ᴛʀʏ ᴀɢᴀɪɴ ᴏʀ ᴘɪᴄᴋ ᴀɴᴏᴛʜᴇʀ ꜱᴏᴜʀᴄᴇ ғʀᴏᴍ /settings</blockquote>",
+            parse_mode=ParseMode.HTML
+        )
 
 @Client.on_callback_query(filters.regex("^favorites$"))
 async def on_favorites_cb(client: Client, callback_query):

@@ -47,6 +47,8 @@ async def run_episode_batch(client, message, episodes, quality, target_chat,
     """
     sem = asyncio.Semaphore(concurrency)
     done = [0]
+    ok_n = [0]
+    fail_n = [0]
     total = len(episodes)
 
     async def _one(ep):
@@ -56,9 +58,14 @@ async def run_episode_batch(client, message, episodes, quality, target_chat,
                     client, message, ep['url'], progress_msg,
                     quality=quality, chat_id=target_chat
                 )
+                if msgs:
+                    ok_n[0] += 1
+                else:
+                    fail_n[0] += 1
             except Exception as e:
                 print(f"Batch episode failed ({ep.get('title', '?')}): {e}")
                 msgs = None
+                fail_n[0] += 1
             done[0] += 1
             if progress_msg is not None:
                 try:
@@ -70,7 +77,8 @@ async def run_episode_batch(client, message, episodes, quality, target_chat,
                     pass
             return msgs or []
 
-    return await asyncio.gather(*[_one(ep) for ep in episodes])
+    results = await asyncio.gather(*[_one(ep) for ep in episodes])
+    return results, ok_n[0], fail_n[0]
 
 
 async def _handle_download(client: Client, message, url, status_msg, is_playlist=False, quality="auto", chat_id=None, name_override=None, season_override=None, ep_num_override=None):
