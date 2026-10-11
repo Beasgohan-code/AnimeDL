@@ -20,6 +20,7 @@ from pyrogram.errors import MessageNotModified
 from pyrogram.enums import ParseMode
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+import uikit
 from config import VERSION
 from cantarella.telegram.decorators import check_ban
 
@@ -71,6 +72,77 @@ async def _default_fmt(user_id: int) -> str:
         return "pdf"
 
 
+# short provider badges for buttons / captions (richgram-style chips)
+_BADGES = {
+    "mangadex": "ᴍᴅx", "comick": "ᴄᴋ", "asura": "ᴀꜱ", "weebcentral": "ᴡᴄ",
+    "mgeko": "ᴍɢ", "manhuafast": "ᴍꜰ", "manhuaplus": "ᴍᴘ", "templetoons": "ᴛᴛ",
+    "mangakakalot": "ᴍᴋ", "mangasee": "ᴍꜱ", "mangabuddy": "ᴍʙ", "ninemanga": "ɴᴍ",
+    "manhwaclan": "18ᴄ", "manga18fx": "18x", "manhwa18": "18",
+}
+RES_PAGE = 8               # series results per page
+
+
+def _badge(pid: str) -> str:
+    return _BADGES.get(pid, pid[:3])
+
+
+async def _render_results(msg, user_id: int, page: int = 0):
+    """Series result card — uikit bar + per-source chips + numbered buttons."""
+    state = user_manga.get(user_id) or {}
+    results = state.get("results") or []
+    tried = state.get("tried") or []
+    pages = max(1, (len(results) + RES_PAGE - 1) // RES_PAGE)
+    page = max(0, min(page, pages - 1))
+    chunk = results[page * RES_PAGE:(page + 1) * RES_PAGE]
+
+    online = sum(1 for _, o in tried if isinstance(o, int) and o)
+    chips = " · ".join(
+        f"{_badge(p)} {o if isinstance(o, int) and o else '⚠️'}"
+        for p, o in tried)
+    text = (
+        "<blockquote>📖 <b>ᴍᴀɴɢᴀ ꜰᴏᴜɴᴅ</b> — “" + (state.get("query") or "")[:32]
+        + "” · " + str(len(results)) + " ʀᴇꜱᴜʟᴛꜱ</blockquote>" + "\n"
+        "<blockquote expandable>🟢 ꜱᴏᴜʀᴄᴇꜱ: <b>" + str(online) + "/"
+        + str(len(tried)) + "</b> ᴀɴꜱᴡᴇʀᴇᴅ\n"
+        "<code>" + uikit.bar(100.0 * online / max(1, len(tried)), 12)
+        + "</code>\n" + chips + "</blockquote>" + "\n"
+        "<i>ᴛᴀᴘ ᴀ ꜱᴇʀɪᴇꜱ → ᴄʜᴀᴘᴛᴇʀꜱ · ᴘᴀɢᴇ " + str(page + 1) + "/"
+        + str(pages) + "</i>")
+
+    buttons = []
+    for j, r in enumerate(chunk):
+        idx = page * RES_PAGE + j
+        label = f"{idx + 1}· {r.title[:28]}  {_badge(r.provider)}"
+        buttons.append([InlineKeyboardButton(
+            label, callback_data=f"mgp_{r.provider}_{idx}")])
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("⬅️", callback_data=f"mgsl_{page - 1}"))
+    nav.append(InlineKeyboardButton(
+        f"▼ {page + 1}/{pages}", callback_data="mgnoop"))
+    if page < pages - 1:
+        nav.append(InlineKeyboardButton("➡️", callback_data=f"mgsl_{page + 1}"))
+    buttons.append(nav)
+    buttons.append([
+        InlineKeyboardButton("🔄 ɴᴇᴡ ꜱᴇᴀʀᴄʜ", callback_data="mgnew"),
+        InlineKeyboardButton("❌ ᴄʟᴏꜱᴇ", callback_data="mgx"),
+    ])
+    markup = InlineKeyboardMarkup(buttons)
+    try:
+        await msg.edit_message_caption(caption=text, reply_markup=markup,
+                                       parse_mode=ParseMode.HTML)
+    except MessageNotModified:
+        pass
+    except Exception:
+        try:
+            await msg.edit_text(text, reply_markup=markup,
+                                parse_mode=ParseMode.HTML)
+        except MessageNotModified:
+            pass
+        except Exception:
+            pass
+
+
 # ─────────────────────────────────────────────
 #  /manga — search
 # ─────────────────────────────────────────────
@@ -106,31 +178,20 @@ async def manga_search_cmd(client: Client, message):
 
     user_manga[message.from_user.id] = {
         "query": query, "results": results, "mangas": {}, "chapters": {},
-        "pref_fmt": pref_fmt,
+        "pref_fmt": pref_fmt, "tried": tried,
     }
     if not results:
-        tried_line = " · ".join(
-            f"{n}:{o}" for n, o in tried) if tried else "no sources"
+        online = sum(1 for _, o in tried if isinstance(o, int) and o)
+        chips = " · ".join(
+            f"{_badge(p)} {o if isinstance(o, int) and o else '⚠️'}"
+            for p, o in tried)
         return await status.edit_text(
-            f"<blockquote>❌ ɴᴏ ᴍᴀɴɢᴀ ꜰᴏᴜɴᴅ ꜰᴏʀ <b>{query[:40]}</b>\n"
-            f"<i>{tried_line}</i></blockquote>", parse_mode=ParseMode.HTML)
+            f"<blockquote>❌ ɴᴏ ᴍᴀɴɢᴀ ꜰᴏᴜɴᴅ ꜰᴏʀ <b>{query[:40]}</b></blockquote>\n"
+            f"<blockquote expandable>🟢 {online}/{len(tried)} ꜱᴏᴜʀᴄᴇꜱ ᴀɴꜱᴡᴇʀᴇᴅ\n{chips}\n"
+            f"ᴛʀʏ ᴀɴᴏᴛʜᴇʀ ᴛɪᴛʟᴇ ᴏʀ /manga ᴀɢᴀɪɴ</blockquote>",
+            parse_mode=ParseMode.HTML)
 
-    buttons, row = [], []
-    for i, r in enumerate(results[:12]):
-        label = f"📖 {r.title[:38]}"
-        row.append(InlineKeyboardButton(label, callback_data=f"mgp_{r.provider}_{i}"))
-        if len(row) == 1:
-            buttons.append(row)
-            row = []
-    if row:
-        buttons.append(row)
-    buttons.append([InlineKeyboardButton("❌ ᴄʟᴏꜱᴇ", callback_data="mgx")])
-
-    health = " · ".join(
-        f"{p.capitalize()} {('✅' if isinstance(o, int) and o else '⚠️')}" for p, o in tried)
-    await status.edit_text(
-        f"<blockquote>📖 <b>ᴍᴀɴɢᴀ ꜰᴏᴜɴᴅ ({len(results)}):</b>\n{health}</blockquote>",
-        reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
+    await _render_results(status, message.from_user.id, 0)
 
 
 # ─────────────────────────────────────────────
@@ -220,8 +281,9 @@ async def _render_chapters(cq, user_id, key, page):
         InlineKeyboardButton("❌ ᴄʟᴏꜱᴇ", callback_data="mgx"),
     ])
 
-    text = (f"<blockquote>📚 <b>{manga.title[:40]}</b>\n"
-            f"ᴄʜᴀᴘᴛᴇʀꜱ: {len(chapters)} · ᴛᴀᴘ ᴀ ᴄʜᴀᴘᴛᴇʀ → 📄 ᴘᴅꜰ / 📚 ᴄʙᴢ</blockquote>")
+    text = (f"<blockquote>📚 <b>{manga.title[:40]}</b> "
+            f"<i>· {_badge(key.split('_', 1)[0])}</i>\n"
+            f"ᴄʜᴀᴘᴛᴇʀꜱ: {len(chapters)} · ᴛᴀᴘ ᴀ ᴄʜᴀᴘᴛᴇʀ → ⬇️ ᴘᴅꜰ / ᴄʙᴢ</blockquote>")
     try:
         await cq.edit_message_caption(caption=text,
                                       reply_markup=InlineKeyboardMarkup(buttons),
@@ -257,17 +319,34 @@ async def on_manga_back(client: Client, cq):
     if not state:
         return await cq.answer("❌ ꜱᴇꜱꜱɪᴏɴ ᴇxᴘɪʀᴇᴅ.", show_alert=True)
     await cq.answer()
-    results = state.get("results") or []
-    buttons = []
-    for i, r in enumerate(results[:12]):
-        buttons.append([InlineKeyboardButton(
-            f"📖 {r.title[:38]}", callback_data=f"mgp_{r.provider}_{i}")])
-    buttons.append([InlineKeyboardButton("❌ ᴄʟᴏꜱᴇ", callback_data="mgx")])
+    await _render_results(cq.message, cq.from_user.id,
+                          state.get("res_page", 0))
+
+
+@Client.on_callback_query(filters.regex(r"^mgsl_(\d+)$"))
+async def on_manga_respage(client: Client, cq):
+    state = user_manga.get(cq.from_user.id)
+    if not state:
+        return await cq.answer("❌ ꜱᴇꜱꜱɪᴏɴ ᴇxᴘɪʀᴇᴅ.", show_alert=True)
+    await cq.answer()
+    state["res_page"] = int(cq.pattern.group(1))
+    await _render_results(cq.message, cq.from_user.id, state["res_page"])
+
+
+@Client.on_callback_query(filters.regex("^mgnew$"))
+async def on_manga_newsearch(client: Client, cq):
+    await cq.answer()
     try:
-        await cq.edit_message_caption(
-            caption=f"<blockquote>📖 <b>ᴍᴀɴɢᴀ ꜰᴏᴜɴᴅ ({len(results)}):</b></blockquote>",
-            reply_markup=InlineKeyboardMarkup(buttons), parse_mode=ParseMode.HTML)
-    except MessageNotModified:
+        await cq.message.delete()
+    except Exception:
+        pass
+    try:
+        await client.send_message(
+            cq.from_user.id,
+            "<blockquote>🔎 ꜱᴇɴᴅ: <code>/manga &lt;ᴛɪᴛʟᴇ&gt;</code>\n"
+            "ᴇxᴀᴍᴘʟᴇ: <code>/manga one piece</code></blockquote>",
+            parse_mode=ParseMode.HTML)
+    except Exception:
         pass
 
 
@@ -360,7 +439,8 @@ async def on_manga_download(client: Client, cq):
             f"<blockquote>📤 ᴜᴘʟᴏᴀᴅɪɴɢ {out_path.stat().st_size/1048576:.1f} ᴍʙ…</blockquote>",
             parse_mode=ParseMode.HTML)
 
-        caption = (f"<blockquote>📖 <b>{manga.title[:50]}</b>\n"
+        caption = (f"<blockquote>📖 <b>{manga.title[:50]}</b> "
+                   f"<i>· {_badge(key.split('_', 1)[0])}</i>\n"
                    f"ᴄʜᴀᴘᴛᴇʀ {chapter.number}"
                    + (f" — {chapter.title[:40]}" if chapter.title else "")
                    + f"\n{len(paths)} ᴘᴀɢᴇꜱ · {fmt.upper()} · ᴀɴɪᴍᴇᴅʟ ᴠ{VERSION}</blockquote>")

@@ -27,34 +27,87 @@ logger = logging.getLogger(__name__)
 DEFAULT_HEADERS = {
     "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                    "(KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"),
+    "Accept": ("text/html,application/xhtml+xml,application/xml;q=0.9,"
+               "image/avif,image/webp,*/*;q=0.8"),
+    "Accept-Language": "en-US,en;q=0.5",
 }
 
+# statuses that usually mean "Cloudflare ate it" — worth a cloudscraper retry
+_BLOCK_STATUSES = {403, 429, 503, 530}
+_cs_session = None          # lazy cloudscraper session (created on first block)
+_cs_failed = False          # cloudscraper import failed once → stop trying
 
-def http_get(url: str, headers: dict = None, timeout=(6, 20)):
-    last = None
-    # loopback hosts must bypass system proxies (sandbox/CI export proxy envs;
-    # routing 127.0.0.1 through them breaks local fixtures and health checks)
-    if url.startswith(("http://127.0.0.1", "http://localhost")):
-        sess = requests.Session()
-        sess.trust_env = False
-        getter = sess.get
-    else:
-        getter = requests.get
-    for attempt in (1, 2):   # one transparent retry per request
+
+def _scraper():
+    """cloudscraper session, created on first use (mirrors Manhwa-Bot's
+    Scraper(cs=True): datacenter IPs get CF-challenged, cloudscraper solves
+    the JS/cookie handshake for us)."""
+    global _cs_session, _cs_failed
+    if _cs_session is None and not _cs_failed:
         try:
-            resp = getter(url, headers={**DEFAULT_HEADERS, **(headers or {})},
+            import cloudscraper
+            _cs_session = cloudscraper.create_scraper(
+                browser={"browser": "chrome", "platform": "windows",
+                         "mobile": False})
+        except Exception as e:
+            logger.info("cloudscraper unavailable: %s", e)
+            _cs_failed = True
+    return _cs_session
+
+
+def _loopback(url: str) -> bool:
+    return url.startswith(("http://127.0.0.1", "http://localhost"))
+
+
+def _request(method: str, url: str, headers: dict = None, params=None,
+             data=None, timeout=(6, 20)):
+    """One HTTP call with plain-requests → cloudscraper escalation.
+    attempt 1: requests · attempt 2: cloudscraper when the failure looked
+    like a Cloudflare block (403/429/503/530), else plain requests again."""
+    hdrs = {**DEFAULT_HEADERS, **(headers or {})}
+    loop = _loopback(url)
+    last, blocked = None, False
+    for attempt in (1, 2):
+        escalated = (attempt == 2 and blocked and not loop)
+        try:
+            if loop:
+                sess = requests.Session()
+                sess.trust_env = False
+                getter = sess.get if method == "GET" else sess.post
+            elif escalated:
+                cs = _scraper()
+                if cs is not None:
+                    getter = cs.get if method == "GET" else cs.post
+                else:
+                    getter = requests.get if method == "GET" else requests.post
+            else:
+                getter = requests.get if method == "GET" else requests.post
+            resp = getter(url, headers=hdrs, params=params, data=data,
                           timeout=timeout)
             if resp.status_code == 200:
+                if escalated:
+                    logger.info("cloudscraper recovered %s", url[:60])
                 return resp
             last = IOError(f"HTTP {resp.status_code} on {url[:80]}")
+            blocked = resp.status_code in _BLOCK_STATUSES
         except requests.RequestException as e:
             last = e
+            blocked = False
         time.sleep(0.6)
-    raise last or IOError(f"GET failed: {url[:80]}")
+    raise last or IOError(f"{method} failed: {url[:80]}")
 
 
-def http_json(url: str, headers: dict = None):
-    return http_get(url, headers=headers).json()
+def http_get(url: str, headers: dict = None, params=None, timeout=(6, 20)):
+    return _request("GET", url, headers=headers, params=params,
+                    timeout=timeout)
+
+
+def http_json(url: str, headers: dict = None, params=None):
+    return http_get(url, headers=headers, params=params).json()
+
+
+def http_post(url: str, data=None, headers: dict = None, timeout=(6, 20)):
+    return _request("POST", url, headers=headers, data=data, timeout=timeout)
 
 
 def fetch_images(urls: list, workdir: Path, progress=None,

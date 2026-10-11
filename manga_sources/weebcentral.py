@@ -12,7 +12,7 @@ import re
 from urllib.parse import quote, urljoin
 
 from manga_sources import MangaChapter, MangaError, MangaSearchResult
-from manga_sources.base import http_get
+from manga_sources.base import http_get, http_post
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +27,26 @@ class WeebCentralProvider:
     id = "weebcentral"
 
     def search(self, query: str) -> list:
-        resp = http_get(f"{BASE}/search/simple?location=main&text={quote(query)}",
-                        headers=_HEADERS)
+        """The reference bot HTMX-POSTs /search/simple with form field
+        `text` (GET there -> 405); older GET variants kept as fallbacks."""
+        q = quote(query)
+        resp, errors = None, []
+        try:
+            resp = http_post(f"{BASE}/search/simple?location=main",
+                             data={"text": query}, headers=_HEADERS)
+        except Exception as e:
+            errors.append(type(e).__name__)
+        if resp is None:
+            for u in (f"{BASE}/search/simple?location=main&text={q}",
+                      f"{BASE}/search/data?text={q}"):
+                try:
+                    resp = http_get(u, headers=_HEADERS)
+                    break
+                except Exception as e:  # noqa: BLE001 - try next endpoint
+                    errors.append(type(e).__name__)
+        if resp is None:
+            raise MangaError("WeebCentral: search failed ("
+                             + ", ".join(errors[:3]) + ")")
         from bs4 import BeautifulSoup
         soup = BeautifulSoup(resp.text, "html.parser")
         out, seen = [], set()

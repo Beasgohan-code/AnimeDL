@@ -79,7 +79,17 @@ srv.shutdown()
 # ══ 3. MangaDex ═════════════════════════════════════════════════════════════
 print("— MangaDex provider")
 from manga_sources import mangadex as mdx
-mdx.http_json = lambda url, headers=None, params=None: (
+import manga_sources.base as _msb
+def _mdx_fake_get(url, headers=None, params=None, timeout=None):
+    class _R:
+        def __init__(self, payload):
+            self._p = payload
+        def json(self):
+            return self._p
+    if url.endswith("/manga") or "/feed" in url:
+        assert params is not None, \
+            "base.http_json must forward params (v4.24.0 regression)"
+    return _R(
     {"data": [{
         "id": "a1b2", "attributes": {
             "title": {"en": "Solo Leveling"},
@@ -95,6 +105,8 @@ mdx.http_json = lambda url, headers=None, params=None: (
      if "/feed" in url else
      {"baseUrl": "https://uploads.mangadex.org",
       "chapter": {"hash": "h1", "data": ["p1.jpg", "p2.jpg"], "dataSaver": []}})
+_real_base_get = _msb.http_get
+_msb.http_get = _mdx_fake_get
 prov = mdx.MangaDexProvider()
 res = prov.search("solo")
 ok("mangadex search shape", len(res) == 1 and res[0].title == "Solo Leveling")
@@ -105,6 +117,7 @@ urls, ref = prov.images(MangaChapter(id="ch1", number="110"))
 ok("mangadex at-home image urls", urls == [
     "https://uploads.mangadex.org/data/h1/p1.jpg",
     "https://uploads.mangadex.org/data/h1/p2.jpg"])
+_msb.http_get = _real_base_get
 
 # ══ 4. Comick ═══════════════════════════════════════════════════════════════
 print("— Comick provider")
@@ -159,10 +172,15 @@ print("— WeebCentral provider")
 from manga_sources import weebcentral as wc
 WC_SEARCH = ('<a href="https://weebcentral.com/series/01J76XY7/solo-leveling">'
              '<img src="https://wc-cdn/c.jpg"/><div><div>Solo Leveling</div></div></a>')
-wc.http_get = lambda url, headers=None: type("R", (), {"text": WC_SEARCH, "status_code": 200})()
+wc.http_post = lambda url, data=None, headers=None, timeout=None: (
+    type("R", (), {"text": WC_SEARCH, "status_code": 200})()
+    if data == {"text": "solo"} and url.endswith("/search/simple?location=main")
+    else (_ for _ in ()).throw(IOError("HTTP 999 unexpected POST " + url)))
 wcp = wc.WeebCentralProvider()
 s = wcp.search("solo")
-ok("weebcentral search", len(s) == 1 and s[0].id.startswith("https://weebcentral.com/series/"))
+ok("weebcentral search (HTMX POST)", len(s) == 1
+   and s[0].id.startswith("https://weebcentral.com/series/"))
+wc.http_get = lambda url, headers=None: type("R", (), {"text": "", "status_code": 200})()
 WC_CH = ('<a href="https://weebcentral.com/chapters/01ABC"><span class="grow flex items-center gap-2">'
          '<span>Chapter 180</span></span></a>'
          '<a href="https://weebcentral.com/chapters/01ABD"><span>Chapter 179</span></a>')
@@ -304,7 +322,7 @@ ok("no third-party branding",
    not any(b in plug.lower() for b in ("codeflix", "abhinai", "dra-sama")))
 ok("help mentions /manga", "/manga" in Path(ROOT, "Script.py").read_text())
 from config import VERSION
-ok("VERSION == 4.22.0", VERSION == "4.23.0", VERSION)
+ok("VERSION == 4.22.0", VERSION == "4.24.0", VERSION)
 
 # ══ 11. LIVE probes (best-effort) ═══════════════════════════════════════════
 print("— live probes (best-effort)")
@@ -465,6 +483,149 @@ ok("usettings shows toggle for premium",
    any("🔞" in l for l in _prem_labels))
 txt_free = us._settings_text({"fmt": "pdf", "nsfw": False, "premium": False, "until": ""})
 ok("usettings text renders", "ᴘᴅꜰ" in txt_free and "ᴏꜰꜰ" in txt_free)
+
+
+# ══ 14. v4.24.0 — cloudscraper escalation, http_post, richgram UI ═══════════
+print("— cloudscraper escalation + http layer (v4.24.0 render-log fixes)")
+import manga_sources.base as _base
+
+# a) params fix: real http_json forwards params (mangadex render bug)
+import inspect
+ok("http_json accepts params",
+   "params" in inspect.signature(_base.http_json).parameters)
+ok("http_get accepts params",
+   "params" in inspect.signature(_base.http_get).parameters)
+ok("http_post exists",
+   callable(getattr(_base, "http_post", None)))
+
+# b) cloudscraper escalation: plain requests 403 → CS session returns 200
+class _CS:
+    def __init__(self, payload):
+        self.payload = payload
+        self.calls = 0
+    def get(self, url, headers=None, params=None, data=None, timeout=None):
+        self.calls += 1
+        return type("R", (), {"status_code": 200, "text": self.payload,
+                              "headers": {}})()
+
+_probe = {"n": 0}
+def _blocked_get(url, headers=None, params=None, timeout=None):
+    _probe["n"] += 1
+    raise _base.requests.exceptions.SSLError("no")  # pragma: no cover
+class _Blocked403:
+    def get(self, url, headers=None, params=None, data=None, timeout=None):
+        return type("R", (), {"status_code": 403, "text": "cf", "headers": {}})()
+
+_cs_fake = _CS("hello-after-cs")
+_real_scraper = _base._scraper
+_base._scraper = lambda: _cs_fake
+_real_requests_get = _base.requests.get
+def _req403(url, headers=None, params=None, data=None, timeout=None):
+    return _Blocked403().get(url)
+_base.requests.get = _req403
+try:
+    resp = _base.http_get("https://cf-blocked.example/search?q=x")
+    ok("403 escalates to cloudscraper",
+       resp.status_code == 200 and _cs_fake.calls == 1
+       and _probe["n"] == 0)
+finally:
+    _base.requests.get = _real_requests_get
+    _base._scraper = _real_scraper
+
+# c) escalation does NOT trigger for non-block statuses (e.g. 404 → error)
+class _NotFound:
+    def get(self, url, headers=None, params=None, data=None, timeout=None):
+        return type("R", (), {"status_code": 404, "text": "x", "headers": {}})()
+_cs_fake2 = _CS("should-not-be-used")
+_base._scraper = lambda: _cs_fake2
+_base.requests.get = lambda url, headers=None, params=None, data=None, timeout=None: \
+    _NotFound().get(url)
+try:
+    _base.http_get("https://example/missing")
+    ok("404 stays a clean failure", False)
+except IOError as e:
+    ok("404 stays a clean failure", "404" in str(e) and _cs_fake2.calls == 0, str(e))
+finally:
+    _base.requests.get = _real_requests_get
+    _base._scraper = _real_scraper
+
+# d) http_post escalation
+class _Post403_200:
+    def post(self, url, data=None, headers=None, params=None, timeout=None):
+        return type("R", (), {"status_code": 200, "text": "posted",
+                              "headers": {}})()
+def _post403(url, data=None, headers=None, params=None, timeout=None):
+    return type("R", (), {"status_code": 403, "text": "cf", "headers": {}})()
+_p = _Post403_200()
+_real_requests_post = _base.requests.post
+_base.requests.post = _post403
+_base._scraper = lambda: _p
+try:
+    r = _base.http_post("https://blocked.example/post", data={"a": "b"})
+    ok("http_post escalates on 403", r.status_code == 200 and r.text == "posted")
+finally:
+    _base.requests.post = _real_requests_post
+    _base._scraper = _real_scraper
+
+# e) UI: _render_results builds the richgram card (health bar + chips + pages)
+print("— richgram-style results renderer")
+import cantarella.telegram.plugins.manga as _mp
+ok("provider badges cover registry",
+   all(p in _mp._BADGES for p in MS.SEARCH_ORDER), str(MS.SEARCH_ORDER))
+
+class _FakeMsg:
+    def __init__(self):
+        self.captured = {}
+    async def edit_message_caption(self, caption=None, reply_markup=None, **k):
+        self.captured = {"text": caption, "markup": reply_markup,
+                         "caption": True}
+    async def edit_text(self, text=None, reply_markup=None, **k):
+        self.captured = {"text": text, "markup": reply_markup, "caption": False}
+
+_mp.user_manga[4242] = {
+    "query": "one piece", "results": [], "mangas": {}, "chapters": {},
+    "tried": [("mangadex", 3), ("comick", "MangaError: x"), ("asura", 2)],
+}
+_msg = _FakeMsg()
+_loop2 = _aio.get_event_loop()
+_loop2.run_until_complete(_mp._render_results(_msg, 4242, 0))
+_cap = _msg.captured.get("text") or ""
+ok("results card has health bar", "▰" in _cap and "2/3" in _cap, _cap[:120])
+ok("results card chips with warn", "ᴄᴋ ⚠️" in _cap, _cap[:160])
+_markup = _msg.captured.get("markup")
+_labels = [b.text for row in _markup.inline_keyboard for b in row] if _markup else []
+_mp.user_manga[4242]["results"] = [
+    MangaSearchResult(provider="mangadex", id=f"m{i}", title=f"T{i}")
+    for i in range(10)]
+_msg2 = _FakeMsg()
+_loop2.run_until_complete(_mp._render_results(_msg2, 4242, 0))
+_m2 = _msg2.captured.get("markup")
+_l2 = [b.text for row in _m2.inline_keyboard for b in row] if _m2 else []
+ok("8 results per page + nav",
+   sum(1 for l in _l2 if l.split("·")[0].strip().isdigit()) == 8
+   and any("1/2" in l for l in _l2) and any("➡️" in l for l in _l2), str(_l2))
+_msg3 = _FakeMsg()
+_loop2.run_until_complete(_mp._render_results(_msg3, 4242, 1))
+_m3 = _msg3.captured.get("markup")
+_l3 = [b.text for row in _m3.inline_keyboard for b in row] if _m3 else []
+ok("page 2 shows remainder + back",
+   sum(1 for l in _l3 if l.split("·")[0].strip().isdigit()) == 2
+   and any("⬅️" in l for l in _l3), str(_l3))
+ok("card header shows query",
+   "one piece" in (_msg2.captured.get("text") or ""))
+_mp.user_manga.pop(4242, None)
+
+# f) blocked-source search still returns other providers (render-log shape)
+class _CFDown:
+    def search(self, q):
+        raise IOError("HTTP 403 on https://cf.example/search")
+MS.get_provider = lambda pid: _CFDown() if pid in ("asura", "templetoons") \
+    else real_gp(pid)
+res5, tried5 = MS.search_all("one piece")
+MS.get_provider = real_gp
+ok("CF-blocked sources degrade to ⚠️, search survives",
+   any(pid == "asura" and isinstance(o, str) for pid, o in tried5)
+   and len(tried5) == len(MS.SEARCH_ORDER), str(tried5)[:120])
 
 n_fail = sum(1 for _, c in PASS if not c)
 print(f"\n═══ test_manga: {len(PASS) - n_fail}/{len(PASS)} passed ═══")

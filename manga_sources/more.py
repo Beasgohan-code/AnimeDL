@@ -212,15 +212,20 @@ class MangabuddyProvider:
         resp = http_get(f"{self.BASE}/search?q={quote(query.strip())}")
         soup = _soup(resp.text)
         out, seen = [], set()
-        for card in soup.find_all(class_="book-item"):
-            a = card.find("a", href=True)
+        cards = soup.find_all(class_="book-item")
+        if not cards:
+            # layout drift fallback: any series-shaped link with a title
+            cards = [a for a in soup.find_all("a", href=True)
+                     if re.search(r"/(manga|comic)/[^/]+/?$", a["href"])]
+        for card in cards:
+            a = card if card.name == "a" else card.find("a", href=True)
             if not a:
                 continue
             full = urljoin(self.BASE + "/", a["href"])
             if full in seen:
                 continue
             seen.add(full)
-            img = card.find("img")
+            img = card.find("img") if card.name != "a" else a.find("img")
             title = ((img.get("alt") if img else "") or a.get("title")
                      or a.get_text(strip=True) or "").strip()
             if not title:
