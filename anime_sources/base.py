@@ -98,6 +98,26 @@ class BaseProvider:
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+#  Episode-listing cache — repeated taps and the mapped-anime watcher re-list
+#  the same show constantly; a 2-minute TTL turns those into instant hits.
+# --------------------------------------------------------------------------
+_EP_CACHE = {}
+_EP_CACHE_TTL = 120.0
+
+
+def cached_episodes(cache_key: str, fetch, *args):
+    """Return cached episode list for cache_key or fetch()+store it."""
+    import time as _t
+    hit = _EP_CACHE.get(cache_key)
+    now = _t.time()
+    if hit and now - hit[0] < _EP_CACHE_TTL:
+        return list(hit[1])
+    val = fetch(*args)
+    _EP_CACHE[cache_key] = (now, val)
+    return val
+
+
 def get_provider(provider_id: str) -> BaseProvider:
     """Instantiate a provider by id (lazy import keeps startup fast)."""
     if provider_id == "hianime":

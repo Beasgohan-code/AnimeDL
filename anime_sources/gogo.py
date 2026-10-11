@@ -50,7 +50,7 @@ class GogoSource(BaseProvider):
         raise last or SourceError("Gogo: all mirrors failed")
 
     def _get(self, url: str, **kw) -> requests.Response:
-        resp = requests.get(url, headers={"User-Agent": DEFAULT_UA}, timeout=15, **kw)
+        resp = requests.get(url, headers={"User-Agent": DEFAULT_UA}, timeout=(6, 15), **kw)
         if resp.status_code != 200:
             raise SourceError(f"Gogo: HTTP {resp.status_code}")
         return resp
@@ -70,6 +70,10 @@ class GogoSource(BaseProvider):
 
     # -------------------------------------------------------------- episodes
     def episodes(self, anime_id: str) -> list:
+        from anime_sources.base import cached_episodes
+        return cached_episodes(f"gogo:{anime_id}", self._fetch_episodes, anime_id)
+
+    def _fetch_episodes(self, anime_id: str) -> list:
         page = self._fetch(f"/category/{anime_id}").text
         m = re.search(r'<input.+?value="(\d+)" id="movie_id"', page)
         if not m:

@@ -81,7 +81,7 @@ class AllAnimeSource(BaseProvider):
                     json={"variables": variables, "query": query},
                     headers={"Referer": REFERER, "User-Agent": UA,
                              "Content-Type": "application/json"},
-                    timeout=15,
+                    timeout=(6, 15),
                 )
                 if resp.status_code != 200:
                     raise SourceError(f"AllAnime: HTTP {resp.status_code}")
@@ -99,7 +99,7 @@ class AllAnimeSource(BaseProvider):
         resp = requests.get(
             SITE + path if path.startswith("/") else path,
             headers={"Referer": referer or REFERER, "User-Agent": UA},
-            timeout=15,
+            timeout=(6, 15),
         )
         if resp.status_code != 200:
             raise SourceError(f"AllAnime: HTTP {resp.status_code}")
@@ -126,6 +126,10 @@ class AllAnimeSource(BaseProvider):
 
     # -------------------------------------------------------------- episodes
     def episodes(self, anime_id: str) -> list:
+        from anime_sources.base import cached_episodes
+        return cached_episodes(f"allanime:{anime_id}", self._fetch_episodes, anime_id)
+
+    def _fetch_episodes(self, anime_id: str) -> list:
         data = self._gql({"showId": anime_id}, EPISODES_LIST_GQL)
         show = (data.get("data", {}) or {}).get("show", {}) or {}
         detail = show.get("availableEpisodesDetail", {}) or {}

@@ -50,10 +50,17 @@ def download_stream(stream_url: str, headers: dict, task_dir: Path, save_name: s
             header_args += ["-H", f"{k}: {v}"] if is_re else ["-headers", f"{k}: {v}\r\n"]
 
     if is_re:
+        # Speed: the binary defaults to 2 download threads — raise to 16,
+        # retry segments harder, skip interactive prompts (a prompt would
+        # hang the pipeline), and pull audio/video/sub tracks concurrently.
         cmd = [binary, stream_url,
                "--save-dir", str(task_dir),
                "--save-name", save_name,
                *header_args,
+               "--thread-count", "16",
+               "--download-retry-count", "5",
+               "--auto-select",
+               "-mt",
                "--no-log"]
     else:  # ffmpeg fallback
         cmd = [binary, "-y", *header_args, "-i", stream_url,

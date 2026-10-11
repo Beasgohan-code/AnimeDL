@@ -41,7 +41,7 @@ class HianimeSource(BaseProvider):
             url,
             headers={"User-Agent": DEFAULT_UA, **(headers or {})},
             impersonate=IMPERSONATE,
-            timeout=15,
+            timeout=(6, 15),
         )
         if resp.status_code != 200:
             raise SourceError(f"Hianime: HTTP {resp.status_code}")
@@ -59,7 +59,7 @@ class HianimeSource(BaseProvider):
 
     # ---------------------------------------------------------------- search
     def search(self, query: str) -> list:
-        page = self._fetch("/search?keyword={query.replace(' ', '+')}")
+        page = self._fetch(f"/search?keyword={query.replace(' ', '+')}")
         if "Just a moment" in page:
             raise SourceError("Hianime is Cloudflare-blocked from this server right now.")
 
@@ -85,9 +85,13 @@ class HianimeSource(BaseProvider):
 
     # -------------------------------------------------------------- episodes
     def episodes(self, anime_id: str) -> list:
+        from anime_sources.base import cached_episodes
+        return cached_episodes(f"hianime:{anime_id}", self._fetch_episodes, anime_id)
+
+    def _fetch_episodes(self, anime_id: str) -> list:
         # ids carry a numeric suffix: "solo-leveling-383"
         numeric_id = anime_id.rsplit("-", 1)[-1]
-        page = self._fetch("/api/theme/episode/list/{numeric_id}")
+        page = self._fetch(f"/api/theme/episode/list/{numeric_id}")
         page = page.replace("\\", "")
 
         eps = []
@@ -117,7 +121,7 @@ class HianimeSource(BaseProvider):
         numeric_id = slug.rsplit("-", 1)[-1]
 
         # episode list → data-id for this episode number
-        listing = self._fetch("/api/theme/episode/list/{numeric_id}").replace("\\", "")
+        listing = self._fetch(f"/api/theme/episode/list/{numeric_id}").replace("\\", "")
         ep_data_id = None
         for chunk in listing.split("ep-item")[1:]:
             if re.search(rf'data-number="{re.escape(ep_num)}"', chunk):

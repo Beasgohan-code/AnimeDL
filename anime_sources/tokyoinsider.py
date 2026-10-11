@@ -55,7 +55,7 @@ class TokyoInsiderSource(BaseProvider):
         resp = requests.get(
             url,
             headers={"User-Agent": DEFAULT_UA, "Referer": BASE + "/"},
-            timeout=20,
+            timeout=(6, 20),
         )
         if resp.status_code != 200:
             raise SourceError(f"TokyoInsider: HTTP {resp.status_code}")

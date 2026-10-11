@@ -137,6 +137,10 @@ class ZangetsuSource(BaseProvider):
 
     # -------------------------------------------------------------- episodes
     def episodes(self, anime_id: str) -> list:
+        from anime_sources.base import cached_episodes
+        return cached_episodes(f"zangetsu:{anime_id}", self._fetch_episodes, anime_id)
+
+    def _fetch_episodes(self, anime_id: str) -> list:
         numeric = anime_id.rsplit("-", 1)[-1]
         data = self._ajax(f"/ajax/episodes?animeId={numeric}")
         eps = data if isinstance(data, list) else data.get("episodes") or data.get("html") and []
