@@ -23,6 +23,7 @@ except ImportError:  # pragma: no cover
 import requests
 
 from anime_sources.base import (
+    http_session,
     BaseProvider, Episode, ResolvedEpisode, SearchResult, SourceError, DEFAULT_UA,
 )
 
@@ -48,7 +49,7 @@ class AnimePaheSource(BaseProvider):
             # impersonated Chrome TLS stack — avoids the fingerprint block
             resp = _c_requests.get(url, impersonate="chrome", **kwargs)
         else:
-            resp = requests.get(url, **kwargs)
+            resp = http_session().get(url, **kwargs)
         if resp.status_code != 200:
             raise SourceError(f"AnimePahe: HTTP {resp.status_code}")
         return resp

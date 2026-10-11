@@ -14,6 +14,7 @@ from urllib.parse import urljoin
 import requests
 
 from anime_sources.base import (
+    http_session,
     BaseProvider, Episode, ResolvedEpisode, SearchResult, SourceError, DEFAULT_UA,
 )
 import os
@@ -50,7 +51,7 @@ class GogoSource(BaseProvider):
         raise last or SourceError("Gogo: all mirrors failed")
 
     def _get(self, url: str, **kw) -> requests.Response:
-        resp = requests.get(url, headers={"User-Agent": DEFAULT_UA}, timeout=(6, 15), **kw)
+        resp = http_session().get(url, headers={"User-Agent": DEFAULT_UA}, timeout=(6, 15), **kw)
         if resp.status_code != 200:
             raise SourceError(f"Gogo: HTTP {resp.status_code}")
         return resp

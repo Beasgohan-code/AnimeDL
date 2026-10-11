@@ -247,10 +247,27 @@ async def __handle_download_internal(client: Client, message, url, status_msg, i
                                 total=primary['total']
                             )
 
+                            # ETA from parsed speed + remaining bytes
+                            eta_str = ""
+                            try:
+                                _mult = {"B": 1, "KB": 1024, "MB": 1024**2, "GB": 1024**3, "TB": 1024**4}
+                                _ms = re.match(r"([\d.]+)\s*([KMGT]?B)/s", str(primary.get("speed") or ""))
+                                _mt = re.match(r"([\d.]+)\s*([KMGT]?B)$", str(primary.get("total") or ""))
+                                _md = re.match(r"([\d.]+)\s*([KMGT]?B)$", str(primary.get("downloaded") or ""))
+                                if _ms and _mt and _md:
+                                    _spd = float(_ms.group(1)) * _mult[_ms.group(2)]
+                                    _rem = (float(_mt.group(1)) - float(_md.group(1))) * _mult[_mt.group(2)]
+                                    if _spd > 0 and _rem > 0:
+                                        _s = int(_rem / _spd)
+                                        eta_str = (f"\n⏳ ᴇꜱᴛ. ʟᴇғᴛ: {_s//3600}ʜ {( _s%3600)//60}ᴍ" if _s >= 3600
+                                                   else f"\n⏳ ᴇꜱᴛ. ʟᴇғᴛ: {_s//60}ᴍ {_s%60:02d}ꜱ")
+                            except Exception:
+                                eta_str = ""
+
                             # Update LOG_CHANNEL to use exactly the same visual progress
                             text = (
                                 f"<blockquote>📥 <b><i>ᴅᴏᴡɴʟᴏᴀᴅɪɴɢ...</i></b>\n"
-                                f"{bar_str}</blockquote>"
+                                f"{bar_str}{eta_str}</blockquote>"
                             )
                 except Empty:
                     break

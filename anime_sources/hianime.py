@@ -35,9 +35,17 @@ class HianimeSource(BaseProvider):
     name = "Hianime"
 
     # ------------------------------------------------------------------ http
+    _CURL_SESSION = None
+
+    @classmethod
+    def _curl(cls):
+        if cls._CURL_SESSION is None:
+            from curl_cffi import requests as c_requests
+            cls._CURL_SESSION = c_requests.Session()
+        return cls._CURL_SESSION
+
     def _get(self, url: str, headers: dict = None) -> str:
-        from curl_cffi import requests as c_requests
-        resp = c_requests.get(
+        resp = self._curl().get(
             url,
             headers={"User-Agent": DEFAULT_UA, **(headers or {})},
             impersonate=IMPERSONATE,

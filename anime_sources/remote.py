@@ -18,6 +18,7 @@ from urllib.parse import quote
 import requests
 
 from anime_sources.base import (
+    http_session,
     BaseProvider, Episode, ResolvedEpisode, SearchResult, SourceError, DEFAULT_UA,
 )
 
@@ -36,7 +37,7 @@ class ConsumetSource(BaseProvider):
         return bool(self.base)
 
     def _get(self, path: str, params: dict = None) -> dict:
-        resp = requests.get(f"{self.base}{path}", params=params,
+        resp = http_session().get(f"{self.base}{path}", params=params,
                             headers={"User-Agent": DEFAULT_UA}, timeout=15)
         if resp.status_code != 200:
             raise SourceError(f"Consumet: HTTP {resp.status_code}")
@@ -102,7 +103,7 @@ class AniwatchApiSource(BaseProvider):
         return bool(self.base)
 
     def _get(self, path: str, params: dict = None) -> dict:
-        resp = requests.get(f"{self.base}{path}", params=params,
+        resp = http_session().get(f"{self.base}{path}", params=params,
                             headers={"User-Agent": DEFAULT_UA}, timeout=15)
         if resp.status_code != 200:
             raise SourceError(f"Aniwatch API: HTTP {resp.status_code}")

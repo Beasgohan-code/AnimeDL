@@ -34,8 +34,9 @@ def search_anime(query, source="aniwatch"):
         results = []
 
         # cantarella search results are usually in .film_list-wrap .flw-item
-        for item in soup.select('.film_list-wrap .flw-item'):
-            title_elem = item.select_one('.film-name a')
+        for item in soup.find_all('div', class_='flw-item'):
+            film = item.find('div', class_='film-name')
+            title_elem = film.find('a') if film else None
             if not title_elem:
                 continue
 
@@ -48,7 +49,7 @@ def search_anime(query, source="aniwatch"):
             anime_id = href.split('/')[-1].split('?')[0]
 
             # Get release year / type if available
-            type_elem = item.select_one('.fdi-item')
+            type_elem = item.find('div', class_='fdi-item')
             anime_type = type_elem.text.strip() if type_elem else "Unknown"
 
             results.append({
@@ -71,31 +72,99 @@ if __name__ == '__main__':
     print(search_anime('naruto'))
 
 
-def search_anime_multi(query, source="animetsu", max_sources=5):
-    """Search the active source first, then fall back through the engine.
+_SEARCH_POOL = None  # shared, never joined — slow sources can't stall answers
 
-    Sites like animetsu/aniwatchtv rot or block server IPs behind Cloudflare;
-    when that happens users used to get a bare "no anime found" even though
-    7 healthy providers were idle. This walks a fallback order instead.
+
+def search_anime_multi(query, source="animetsu", max_sources=5,
+                       head_start=4.0, deadline=12.0):
+    """Search the active source first, then fall back through the engine —
+    but RACE the sources in parallel instead of walking them one by one.
+
+    Every source is queried concurrently; the active source gets a short
+    head start (default 4s) to protect result priority, after which the
+    first non-empty answer wins. Worst case with a dead primary drops from
+    timeout x N to roughly one head-start window.
 
     Returns (results, tried):
       results — first non-empty result list found ([] if every source failed)
-      tried   — [(source_key, outcome)] for honest user-facing diagnostics
+      tried   — [(source_key, outcome)] in priority order, WINNER LAST
+                (the UI reads tried[-1] as "served by")
     """
+    import concurrent.futures as _cf
+    import time as _t
+
     from anime_sources.base import SOURCE_CYCLE
 
     order = [source] + [s for s in SOURCE_CYCLE if s != source] + ["aniwatch"]
     seen = set()
     order = [s for s in order if not (s in seen or seen.add(s))]
+    order = order[:max(1, max_sources)]
 
-    tried, results = [], []
-    for key in order[:max(1, max_sources)]:
+    def _attempt(key):
+        return search_anime(query, key) or []
+
+    if len(order) == 1:
         try:
-            results = search_anime(query, key) or []
+            results = _attempt(order[0])
             outcome = f"{len(results)} found" if results else "no results"
         except Exception as e:
             results, outcome = [], f"error: {type(e).__name__}"
-        tried.append((key, outcome))
-        if results:
-            break
+        return results, [(order[0], outcome)]
+
+    tried_by_key = {}
+    got = {}
+    # Module-level pool: executor threads are reused and never joined, so a
+    # slow source can never stall the search that already got its answer.
+    global _SEARCH_POOL
+    if _SEARCH_POOL is None:
+        _SEARCH_POOL = _cf.ThreadPoolExecutor(max_workers=8, thread_name_prefix="anisearch")
+    pool = _SEARCH_POOL
+    futs = {pool.submit(_attempt, k): k for k in order}
+    pending = set(futs)
+    end = _t.time() + deadline
+    grace = _t.time() + head_start  # before this, only the primary may win
+
+    try:
+        while pending and _t.time() < end:
+            done_now, pending = _cf.wait(pending, timeout=min(0.5, max(0.0, end - _t.time())))
+            for fut in done_now:
+                key = futs[fut]
+                try:
+                    r = fut.result()
+                    outcome = f"{len(r)} found" if r else "no results"
+                except Exception as e:
+                    r, outcome = [], f"error: {type(e).__name__}"
+                tried_by_key[key] = outcome
+                got[key] = r
+
+            # primary answered inside its grace window -> immediate win
+            if got.get(source):
+                return _ordered(got, tried_by_key, order, source, got[source])
+            # grace expired -> first buffered non-empty answer in priority order
+            if _t.time() >= grace:
+                for k in order:
+                    if got.get(k):
+                        return _ordered(got, tried_by_key, order, source, got[k])
+
+        for fut in pending:  # global deadline hit
+            tried_by_key[futs[fut]] = "timeout"
+    finally:
+        for fut in pending:
+            fut.cancel()
+
+    # nobody won live — best buffered non-empty in priority order
+    results = next((got[k] for k in order if got.get(k)), [])
+    return _ordered(got, tried_by_key, order, source, results)
+
+
+def _ordered(got, tried_by_key, order, source, results):
+    """Assemble `tried` in priority order with the winning source last."""
+    tried = [(k, tried_by_key[k]) for k in order if k in tried_by_key and k != source]
+    if source in tried_by_key:
+        tried.insert(0, (source, tried_by_key[source]))
+    winner_key = source if got.get(source) else next(
+        (k for k in order if got.get(k)), None)
+    if winner_key is not None:
+        tried = [kv for kv in tried if kv[0] != winner_key]
+        tried.append((winner_key, tried_by_key.get(winner_key, f"{len(results)} found")))
     return results, tried

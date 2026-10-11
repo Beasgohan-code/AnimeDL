@@ -14,6 +14,9 @@
 
 import logging
 import re
+import threading
+
+import requests as _requests
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -116,8 +119,35 @@ def cached_episodes(cache_key: str, fetch, *args):
     if hit and now - hit[0] < _EP_CACHE_TTL:
         return list(hit[1])
     val = fetch(*args)
+    if len(_EP_CACHE) > 256:  # bounded memory: evict oldest entry
+        _EP_CACHE.pop(min(_EP_CACHE, key=lambda k: _EP_CACHE[k][0]), None)
     _EP_CACHE[cache_key] = (now, val)
     return val
+
+
+# ---------------------------------------------------------------------------
+#  Shared keep-alive HTTP session — reuses TCP/TLS connections across the
+#  whole engine (mirror walks, resolve chains, search). Saves a full
+#  handshake (100-500ms) on every request after the first to each host.
+# ---------------------------------------------------------------------------
+_HTTP_SESSION = None
+_HTTP_SESSION_LOCK = threading.Lock()
+
+
+def http_session():
+    """Process-wide requests.Session with a warmed connection pool."""
+    global _HTTP_SESSION
+    if _HTTP_SESSION is None:
+        with _HTTP_SESSION_LOCK:
+            if _HTTP_SESSION is None:
+                from requests.adapters import HTTPAdapter
+                session = _requests.Session()
+                adapter = HTTPAdapter(pool_connections=10, pool_maxsize=20)
+                session.mount("https://", adapter)
+                session.mount("http://", adapter)
+                session.headers["User-Agent"] = DEFAULT_UA
+                _HTTP_SESSION = session
+    return _HTTP_SESSION
 
 
 def cached_streams(cache_key: str, fetch, *args):

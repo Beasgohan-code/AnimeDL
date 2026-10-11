@@ -24,6 +24,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from anime_sources.base import (
+    http_session,
     BaseProvider, Episode, ResolvedEpisode, SearchResult, SourceError,
     Stream, DEFAULT_UA,
 )
@@ -52,7 +53,7 @@ class TokyoInsiderSource(BaseProvider):
     name = "TokyoInsider"
 
     def _get(self, url: str) -> str:
-        resp = requests.get(
+        resp = http_session().get(
             url,
             headers={"User-Agent": DEFAULT_UA, "Referer": BASE + "/"},
             timeout=(6, 20),

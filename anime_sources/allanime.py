@@ -19,6 +19,7 @@ from typing import Optional
 import requests
 
 from anime_sources.base import (
+    http_session,
     BaseProvider, Episode, ResolvedEpisode, SearchResult, SourceError, DEFAULT_UA,
 )
 
@@ -76,7 +77,7 @@ class AllAnimeSource(BaseProvider):
         last_exc = None
         for attempt in range(2):   # one retry for transient network blips
             try:
-                resp = requests.post(
+                resp = http_session().post(
                     API,
                     json={"variables": variables, "query": query},
                     headers={"Referer": REFERER, "User-Agent": UA,
@@ -96,7 +97,7 @@ class AllAnimeSource(BaseProvider):
         return resp.json()
 
     def _site_get(self, path: str, referer: str = None) -> str:
-        resp = requests.get(
+        resp = http_session().get(
             SITE + path if path.startswith("/") else path,
             headers={"Referer": referer or REFERER, "User-Agent": UA},
             timeout=(6, 15),

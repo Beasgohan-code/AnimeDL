@@ -24,6 +24,7 @@ from urllib.parse import quote_plus
 import requests
 
 from anime_sources.base import (
+    http_session,
     BaseProvider, Episode, ResolvedEpisode, SearchResult, SourceError,
     Stream, DEFAULT_UA,
 )
@@ -45,7 +46,7 @@ def _bootstrap(force: bool = False):
     if not force and _session_cache["token"] and _t.time() - _session_cache["at"] < _TTL:
         return _session_cache
 
-    resp = requests.get(
+    resp = http_session().get(
         f"{BASE}/home",
         headers={"User-Agent": DEFAULT_UA,
                  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -75,7 +76,7 @@ class ZangetsuSource(BaseProvider):
     # ------------------------------------------------------------------ ajax
     def _ajax(self, path: str, referer: str = "/home") -> dict:
         sess = _bootstrap()
-        resp = requests.get(
+        resp = http_session().get(
             f"{BASE}{path}",
             headers={
                 "User-Agent": DEFAULT_UA,
@@ -90,7 +91,7 @@ class ZangetsuSource(BaseProvider):
         if resp.status_code == 403 or resp.status_code == 401:
             # token/cookie expired → re-bootstrap once
             sess = _bootstrap(force=True)
-            resp = requests.get(
+            resp = http_session().get(
                 f"{BASE}{path}",
                 headers={
                     "User-Agent": DEFAULT_UA,
@@ -108,7 +109,7 @@ class ZangetsuSource(BaseProvider):
 
     # ---------------------------------------------------------------- search
     def search(self, query: str) -> list:
-        page = requests.get(
+        page = http_session().get(
             f"{BASE}/search?keyword={quote_plus(query)}",
             headers={"User-Agent": DEFAULT_UA, "Referer": f"{BASE}/home"},
             timeout=15,

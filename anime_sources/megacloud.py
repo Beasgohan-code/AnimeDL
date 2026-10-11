@@ -24,6 +24,8 @@ import time
 from typing import Optional
 
 import requests
+
+from anime_sources.base import http_session
 from bs4 import BeautifulSoup
 
 try:
@@ -51,7 +53,7 @@ _KEY_TTL = 3600
 
 def _get(url: str, headers: dict = None, timeout: int = 15) -> Optional[requests.Response]:
     try:
-        resp = requests.get(url, headers=headers or _HEADERS, timeout=timeout)
+        resp = http_session().get(url, headers=headers or _HEADERS, timeout=timeout)
         if resp.status_code != 200:
             return None
         return resp

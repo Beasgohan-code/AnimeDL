@@ -238,7 +238,7 @@ def YouTubeDL(url: str, loop=None):
         "format": format_str,
         "merge_output_format": "mp4" if not is_audio_only else None,
         "writethumbnail": True,
-        "concurrent_fragment_downloads": 8,
+        "concurrent_fragment_downloads": 16,
         "overwrites": True,
         "progress_hooks": [_make_progress_hook(loop)],
         "writesubtitles": True,
@@ -257,6 +257,21 @@ def YouTubeDL(url: str, loop=None):
             "thumbnail": f"{Paths.thumbnail_ytdl}/%(title)s.%(ext)s",
         },
     }
+
+    # aria2c (installed in the Docker image) parallelizes direct-HTTP
+    # downloads with 16 connections per server — big win for DDL hosts.
+    try:
+        import shutil as _shutil
+        if _shutil.which("aria2c"):
+            ydl_opts["external_downloader"] = {"default": "aria2c"}
+            ydl_opts["external_downloader_args"] = {
+                "aria2c": [
+                    "-x", "16", "-s", "16", "-k", "1M",
+                    "--file-allocation=none", "--console-log-level=warn",
+                ]
+            }
+    except Exception:
+        pass
 
     # Merge cookie authentication options (fixes YouTube bot detection)
     ydl_opts.update(_get_cookie_opts())

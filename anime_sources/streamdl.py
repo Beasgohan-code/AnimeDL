@@ -75,10 +75,12 @@ def download_stream(stream_url: str, headers: dict, task_dir: Path, save_name: s
         line = line.strip()
         m = re.search(r"(\d+(?:\.\d+)?)%", line)
         if m:
+            m_size = re.search(r"([\d.]+)\s*([KMG]?B)\s*/\s*([\d.]+)\s*([KMG]?B)", line)
             progress_queue.put({
                 "percent": f"{m.group(1)}%",
                 "speed": (re.search(r"([\d.]+\s*[KMG]?B/s)", line) or [None, "-"])[1],
-                "downloaded": "-", "total": "-",
+                "downloaded": f"{m_size.group(1)}{m_size.group(2)}" if m_size else "-",
+                "total": f"{m_size.group(3)}{m_size.group(4)}" if m_size else "-",
                 "type": dl_type, "title": title,
             })
 
