@@ -126,13 +126,26 @@ def cleanup_scratch(max_age_s: int = 3600) -> int:
 # ---------------------------------------------------------------------------
 # Keep-alive
 # ---------------------------------------------------------------------------
+def _auto_external_url():
+    """Render injects RENDER_EXTERNAL_URL — pinging our own public URL counts
+    as real traffic, which is what the free-tier 15-minute idle detector
+    watches. The localhost self-ping alone does NOT keep the service awake
+    (observed: SIGTERM at 14m55s with only local pings in the logs)."""
+    url = os.environ.get("RENDER_EXTERNAL_URL", "").strip()
+    if not url:
+        host = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "").strip()
+        if host:
+            url = f"https://{host}"
+    return url or None
+
+
 class KeepAlive:
     """Self-ping + optional external ping loop."""
 
     def __init__(self):
         self.enabled = config.KEEP_ALIVE_ENABLED
         self.interval = max(30, config.KEEP_ALIVE_INTERVAL)
-        self.external_url = config.KEEP_ALIVE_URL
+        self.external_url = config.KEEP_ALIVE_URL or _auto_external_url()
         self.total = 0
         self.failed = 0
         self.last_ok = None            # monotonic ts
@@ -178,9 +191,9 @@ class KeepAlive:
         if not self.enabled:
             logger.info("Keep-alive disabled (KEEP_ALIVE_ENABLED=false)")
             return
-        logger.info("💓 Keep-alive active — self-ping every %ss%s",
+        logger.warning("💓 Keep-alive active — self-ping every %ss%s",
                     self.interval,
-                    f" + external {self.external_url}" if self.external_url else "")
+                    f" + external {self.external_url} (anti-spin-down)" if self.external_url else " (NO external URL — free tier will spin down!)")
         while not self._stop.is_set():
             try:
                 await self.cycle_once()
@@ -211,6 +224,7 @@ class KeepAlive:
         return {
             "enabled": self.enabled,
             "interval": self.interval,
+            "external_url": self.external_url,
             "total_pings": self.total,
             "failed_pings": self.failed,
             "last_ok_ago_s": last_ok_s,
@@ -448,7 +462,15 @@ class Watchdog:
             ("Restart #", uikit.code(self.restarts)),
         ])
         await asyncio.sleep(1)  # give the alert a moment to flush
-        os.execl(sys.executable, sys.executable, "-m", "cantarella")
+        # Platform-native restart: exit gracefully and let the supervisor
+        # (Render/tini/systemd) relaunch the REAL entrypoint. The old
+        # os.execl(python -m cantarella) replaced the process with an
+        # entrypoint that never ran its coroutine — instant silent death.
+        import signal as _signal
+        try:
+            os.kill(os.getpid(), _signal.SIGTERM)
+        except Exception:
+            sys.exit(0)
 
     def stats(self) -> dict:
         try:

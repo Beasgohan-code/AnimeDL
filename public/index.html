@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AnimeDL — Dashboard</title>
+<style>
+  :root {
+    --bg: #0b0e14; --card: #131824; --line: #232b3d;
+    --text: #e8ecf4; --dim: #8b94a7; --acc: #7c5cff; --ok: #2fd07f; --warn: #ffb02e; --bad: #ff5470;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+    min-height: 100vh; padding: 24px;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 18px 22px; border-radius: 16px; margin-bottom: 18px;
+    background: linear-gradient(120deg, #1a1440, #231a5e 45%, #0e2a4a);
+    border: 1px solid var(--line);
+  }
+  h1 { font-size: 20px; letter-spacing: .3px; }
+  h1 span { color: var(--acc); }
+  .ver { color: var(--dim); font-size: 13px; margin-top: 4px; }
+  .pill {
+    font-size: 12px; padding: 6px 12px; border-radius: 999px; font-weight: 600;
+    background: rgba(47,208,127,.12); color: var(--ok); border: 1px solid rgba(47,208,127,.35);
+  }
+  .pill.bad { background: rgba(255,84,112,.12); color: var(--bad); border-color: rgba(255,84,112,.35); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px;
+  }
+  .card h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 1.4px;
+    color: var(--dim); margin-bottom: 12px;
+  }
+  .kv { display: flex; justify-content: space-between; gap: 10px; padding: 5px 0; font-size: 14px; }
+  .kv b { color: var(--dim); font-weight: 500; }
+  .kv span { font-family: ui-monospace, Menlo, monospace; text-align: right; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
+  footer { margin-top: 18px; text-align: center; color: var(--dim); font-size: 12px; }
+  a { color: var(--acc); text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>🌸 AnimeDL <span>Dashboard</span></h1>
+      <div class="ver" id="ver">connecting…</div>
+    </div>
+    <div class="pill" id="status">…</div>
+  </header>
+
+  <div class="grid">
+    <div class="card">
+      <h2>💓 Keep-alive (anti-spin-down)</h2>
+      <div class="kv"><b>Pings</b><span id="ka-pings">–</span></div>
+      <div class="kv"><b>Failed</b><span id="ka-failed">–</span></div>
+      <div class="kv"><b>Last OK</b><span id="ka-last">–</span></div>
+      <div class="kv"><b>External URL</b><span id="ka-ext">–</span></div>
+      <div class="kv"><b>Last error</b><span id="ka-err">–</span></div>
+    </div>
+    <div class="card">
+      <h2>🐕 Watchdog</h2>
+      <div class="kv"><b>Checks</b><span id="wd-checks">–</span></div>
+      <div class="kv"><b>Memory</b><span id="wd-mem">–</span></div>
+      <div class="kv"><b>Disk free</b><span id="wd-disk">–</span></div>
+      <div class="kv"><b>Restarts</b><span id="wd-restarts">–</span></div>
+      <div class="kv"><b>Heartbeat</b><span id="wd-hb">–</span></div>
+    </div>
+    <div class="card">
+      <h2>⚙️ Runtime</h2>
+      <div class="kv"><b>Uptime</b><span id="rt-up">–</span></div>
+      <div class="kv"><b>Leech task</b><span id="rt-leech">–</span></div>
+      <div class="kv"><b>Queue</b><span id="rt-queue">–</span></div>
+      <div class="kv"><b>Health JSON</b><span><a href="/health">/health</a></span></div>
+    </div>
+  </div>
+
+  <footer>auto-refreshes every 10s · same origin as the bot service</footer>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const fmtUp = (s) => {
+  if (s == null) return "–";
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return (d ? d + "d " : "") + (h ? h + "h " : "") + m + "m";
+};
+async function refresh() {
+  try {
+    const r = await fetch("/health", { cache: "no-store" });
+    const j = await r.json();
+    $("ver").textContent = "v" + (j.version || "?") + " · uptime " + fmtUp(j.uptime_s);
+    const st = $("status");
+    st.textContent = j.status === "ok" ? "● healthy" : "● " + (j.status || "?");
+    st.className = "pill" + (j.status === "ok" ? "" : " bad");
+    const ka = j.keepalive || {};
+    $("ka-pings").textContent = ka.total_pings ?? "–";
+    $("ka-failed").textContent = ka.failed_pings ?? "–";
+    $("ka-failed").className = ka.failed_pings ? "warn" : "ok";
+    $("ka-last").textContent = ka.last_ok_ago_s != null ? ka.last_ok_ago_s + "s ago" : "pending";
+    $("ka-ext").textContent = ka.external_url || "NOT SET ⚠";
+    $("ka-ext").className = ka.external_url ? "ok" : "bad";
+    $("ka-err").textContent = ka.last_error || "none";
+    $("ka-err").className = ka.last_error ? "warn" : "";
+    const wd = j.watchdog || {};
+    $("wd-checks").textContent = wd.checks ?? "–";
+    $("wd-mem").textContent = wd.mem_rss_mb != null ? wd.mem_rss_mb + " MB" : "–";
+    $("wd-disk").textContent = wd.disk_free_mb != null ? wd.disk_free_mb + " MB" : "–";
+    $("wd-restarts").textContent = wd.restarts ?? "–";
+    $("wd-hb").textContent = wd.heartbeat_age_s != null ? wd.heartbeat_age_s + "s ago" : "–";
+    $("rt-up").textContent = fmtUp(j.uptime_s);
+    $("rt-leech").textContent = j.leech_task_active ? "active" : "idle";
+    $("rt-queue").textContent = j.queue_size ?? "–";
+  } catch (e) {
+    $("status").textContent = "● offline";
+    $("status").className = "pill bad";
+  }
+}
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>

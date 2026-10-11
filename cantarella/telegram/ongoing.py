@@ -380,6 +380,8 @@ async def check_and_download_ongoing(client: Client, chat_id: int):
             print(f"Error processing {anime['title']}: {e}")
 
 
+_SRC_BENCH = {}  # src -> bench-until-ts (persistent across watcher runs)
+
 async def check_mapped_anime(client: Client, chat_id: int):
     """Watch every /setmap'd anime across the healthy multi-source providers.
 
@@ -411,6 +413,13 @@ async def check_mapped_anime(client: Client, chat_id: int):
     seen = set()
     order = [s for s in order if not (s in seen or seen.add(s))]
     dead_sources = set()  # circuit breaker: connection-dead for one mapping = skip for the cycle
+    now = time.time()
+    # TLS-fingerprint blocks (animepahe behind DDoS-Guard etc.) do not clear
+    # in 90s — bench those sources for 30 min so logs stay readable and we
+    # stop burning a request on a blocked host every cycle.
+    long_bench = {s: ts for s, ts in _SRC_BENCH.items() if ts > now}
+    for s in long_bench:
+        dead_sources.add(s)
 
     for doc in mappings:
         channel_id = doc.get("_id")
@@ -422,8 +431,16 @@ async def check_mapped_anime(client: Client, chat_id: int):
                     continue
                 try:
                     res = await asyncio.to_thread(search_provider, src, name)
-                except Exception:
+                except Exception as e:
                     res = []
+                    _msg = str(e)
+                    if any(sig in _msg for sig in (
+                            "TLS", "SSL", "curl: (35)", "curl: (7)",
+                            "Name or service not known", "Connection refused",
+                            "connection reset", "UNREACHABLE")):
+                        _SRC_BENCH[src] = time.time() + 1800  # 30 min
+                        print(f"Mapped watcher: {src} unreachable "
+                              f"({_msg[:60]}…) — benching for 30 min")
                 if res:
                     found = res[0]
                     if suspects:

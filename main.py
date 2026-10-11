@@ -107,12 +107,28 @@ async def start_health_server():
     web_app = web.Application()
     web_app.router.add_get("/health", handle_health)
     web_app.router.add_get("/", handle_health)   # Render HEAD / probes → 200
+
+    # Dashboard on the PRIMARY port — the only port Render exposes publicly.
+    # (The 8081 standalone server stays up for local debugging, but on
+    # Render only $PORT is reachable, so /dashboard must live here.)
+    html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "public", "index.html")
+    if os.path.exists(html_path):
+        async def _serve_dashboard(request):
+            return web.FileResponse(html_path)
+        web_app.router.add_get("/dashboard", _serve_dashboard)
+        web_app.router.add_static("/static", os.path.dirname(html_path))
     runner = web.AppRunner(web_app)
     await runner.setup()
     port = int(os.environ.get("PORT", "8080"))
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
-    logger.info("Health server listening on 0.0.0.0:%s", port)
+    ext = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
+    logger.warning("🌐 Health: %s/health", ext or f"http://0.0.0.0:{port}")
+    if os.path.exists(html_path):
+        logger.warning("📊 Dashboard: %s/dashboard", ext or f"http://0.0.0.0:{port}")
+    else:
+        logger.info("Health server listening on 0.0.0.0:%s", port)
 
 
 # ---------------------------------------------------------------------------
@@ -240,18 +256,32 @@ async def run():
         await reliability.stop_all()
     except Exception:
         pass
-    logger.info("🛑 Shutdown signal received — draining…")
+    _up = int((datetime.utcnow() - START_TIME).total_seconds()) // 60
+    logger.warning("🛑 Stop signal received (uptime %dm) — draining…", _up)
     await app.stop()
 
 
 def main():
-    logger.info("Starting AnimeDL v%s…", config.VERSION)
+    import os as _os
+    import time as _time
+    _t0 = _time.time()
+    logger.warning(
+        "🟢 START AnimeDL v%s — pid=%s port=%s work=%s",
+        config.VERSION, _os.getpid(), _os.environ.get("PORT", "8080"),
+        str(config.WORK_PATH),
+    )
     loop = asyncio.get_event_loop()
     try:
         loop.run_until_complete(run())
     except (KeyboardInterrupt, SystemExit):
-        logger.info("Shutdown requested — goodbye.")
+        pass
     finally:
+        _mins = int((_time.time() - _t0) // 60)
+        logger.warning(
+            "🛑 STOP AnimeDL v%s — uptime %dm%s — bye 👋",
+            config.VERSION, _mins,
+            " (stop signal)" if _mins >= 0 else "",
+        )
         loop.close()
 
 

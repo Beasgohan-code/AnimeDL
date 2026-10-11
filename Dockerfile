@@ -50,7 +50,7 @@ RUN chmod +x binary/N_m3u8DL-RE 2>/dev/null || true && \
 EXPOSE 8080
 
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -sf http://localhost:8080/health || exit 1
+    CMD curl -sf http://localhost:${PORT:-8080}/health || exit 1
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["python3", "main.py"]
