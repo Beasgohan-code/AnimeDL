@@ -272,20 +272,106 @@ class AllAnimeSource(BaseProvider):
                 })
         return streams
 
+    # 2026-10 (jerry): allanime's PRIMARY episode route is a GET with a
+    # persistedQuery hash, and the response normally carries the links
+    # AES-encrypted in a "tobeparsed" blob (plain sourceUrls is the
+    # fallback shape). Missing this is exactly "0 sourceUrl(s)".
+    PERSISTED_EPISODE_HASH = "d405d0edd690624b66baba3068e0edc3ac90f1597d898a1ec8db4e5c43c00fec"
+
+    def _tobeparsed_plain(self, blob: str) -> str:
+        """Raw AES-256-CTR decode → plaintext json text (no shape assumed).
+        Layout (ani-cli/jerry): b64 → [0]=pad, [1:13]=iv, ct=[13:-16],
+        last 16 = tag/ignore; counter = iv + 00000002; key = sha256(SECRET)."""
+        from Crypto.Cipher import AES
+        from Crypto.Util import Counter
+
+        raw = base64.b64decode(blob)
+        iv = raw[1:13]
+        ctr = Counter.new(32 + 96, initial_value=int.from_bytes(iv + b"\x00\x00\x00\x02", "big"))
+        cipher = AES.new(AES_KEY, AES.MODE_CTR, counter=ctr)
+        return cipher.decrypt(raw[13:len(raw) - 16]).decode("utf-8", errors="ignore")
+
+    def _episode_query(self, show_id: str, ep_num: str, mode: str):
+        """Episode links payload: GET persistedQuery (jerry primary) with
+        whole-response tobeparsed decode, POST raw-query as fallback.
+        Returns parsed json (dict) OR plaintext text — caller scrapes."""
+        variables = json.dumps(
+            {"showId": show_id, "translationType": mode, "episodeString": str(ep_num)},
+            separators=(",", ":"))
+        ext = json.dumps(
+            {"persistedQuery": {"version": 1, "sha256Hash": self.PERSISTED_EPISODE_HASH}},
+            separators=(",", ":"))
+        try:
+            resp = http_session().get(
+                API, params={"variables": variables, "extensions": ext},
+                headers={"Referer": "https://allmanga.to",
+                         "Origin": "https://youtu-chan.com",
+                         "User-Agent": UA},
+                timeout=(6, 15))
+            if resp.status_code == 200 and resp.text.strip():
+                txt = resp.text
+                if "tobeparsed" in txt:
+                    m = re.search(r'"tobeparsed"\s*:\s*"([^"]+)"', txt)
+                    if m:
+                        plain = self._tobeparsed_plain(m.group(1))
+                        logging.getLogger(__name__).info(
+                            "allanime: tobeparsed blob decoded (%d chars)", len(plain))
+                        return plain
+                return txt
+        except Exception as e:  # noqa: BLE001
+            logging.getLogger(__name__).info(
+                "allanime: GET persistedQuery failed (%s) — POST fallback", e)
+
+        # ── POST fallback (raw query, our long-standing route) ──
+        data = self._gql(
+            {"showId": show_id, "translationType": mode, "episodeString": str(ep_num)},
+            EPISODE_EMBED_GQL,
+        )
+        if isinstance(data, dict):
+            scopes = [self._dig(data, "data", "episode")]
+            dd = data.get("data")
+            if isinstance(dd, dict):
+                scopes.append(dd)
+            scopes.append(data)
+            for scope in scopes:
+                if isinstance(scope, dict) and scope.get("tobeparsed"):
+                    logging.getLogger(__name__).info(
+                        "allanime: tobeparsed blob (POST route) decoded")
+                    return self._tobeparsed_plain(str(scope["tobeparsed"]))
+        return data
+
+    def _source_urls_from_payload(self, payload) -> list:
+        """payload (parsed json of any shape, or plaintext) → sourceUrl list.
+        Entries keep their dict shape when names are available; scraped
+        text entries become plain marker strings."""
+        urls = []
+        if isinstance(payload, (dict, list)):
+            try:
+                ep = self._dig(payload, "data", "episode") if isinstance(payload, dict) else {}
+                raw = ep.get("sourceUrls") or (payload.get("sourceUrls") if isinstance(payload, dict) else None) or []
+                if isinstance(raw, list):
+                    for e in raw:
+                        if isinstance(e, dict) and e.get("sourceUrl"):
+                            urls.append({"sourceName": e.get("sourceName", ""),
+                                         "sourceUrl": str(e["sourceUrl"])})
+                        elif isinstance(e, str) and e:
+                            urls.append(str(e))
+            except Exception:  # noqa: BLE001
+                pass
+        if not urls:
+            text = payload if isinstance(payload, str) else json.dumps(payload)
+            for m in re.finditer(r'"sourceUrl"\s*:\s*"([^"]+)"', text or ""):
+                urls.append(m.group(1).replace("\\u002F", "/").replace("\\/", "/"))
+        return urls
+
     def resolve(self, url: str, mode: str = "sub") -> ResolvedEpisode:
         m = re.match(r"allanime://([^/]+)/([^/?#]+)", url)
         if not m:
             raise SourceError("AllAnime: could not parse episode reference")
         show_id, ep_num = m.group(1), m.group(2)
 
-        data = self._gql(
-            {"showId": show_id, "translationType": mode, "episodeString": ep_num},
-            EPISODE_EMBED_GQL,
-        )
-        episode = self._dig(data, "data", "episode")   # survives {"data": "<str>"}
-        raw_urls = episode.get("sourceUrls") or []
-        if not isinstance(raw_urls, list):
-            raw_urls = []
+        payload = self._episode_query(show_id, ep_num, mode)
+        raw_urls = self._source_urls_from_payload(payload)   # survives tobeparsed/junk
         logging.getLogger(__name__).info(
             "allanime: EP%s of %s → %d sourceUrl(s)", ep_num, show_id, len(raw_urls))
 
