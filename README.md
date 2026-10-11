@@ -8,7 +8,7 @@ AnimeDL merges a full anime search & download engine (search, multi-quality epis
 
 ## ✨ Features
 
-### 🎬 Anime downloader — 7 sources
+### 🎬 Anime downloader — 8 sources
 | Source | Type | Notes |
 |---|---|---|
 | ⚡ **Hianime** (hianime.at) | built-in | sub + dub, subs extracted; Cloudflare bypass via curl-impersonate TLS (ani-cli v5 port) |

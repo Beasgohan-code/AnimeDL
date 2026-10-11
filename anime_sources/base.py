@@ -109,6 +109,9 @@ def get_provider(provider_id: str) -> BaseProvider:
     if provider_id == "gogo":
         from anime_sources.gogo import GogoSource
         return GogoSource()
+    if provider_id == "tokyoinsider":
+        from anime_sources.tokyoinsider import TokyoInsiderSource
+        return TokyoInsiderSource()
     if provider_id == "animepahe":
         from anime_sources.animepahe import AnimePaheSource
         return AnimePaheSource()
@@ -120,9 +123,10 @@ def get_provider(provider_id: str) -> BaseProvider:
 
 # Sources available in the /manage source cycle (order matters).
 # Legacy sources ("animetsu", "aniwatch") are handled by the original scrapers.
-SOURCE_CYCLE = ["hianime", "allanime", "gogo", "animepahe", "animetsu", "aniwatch"]
+SOURCE_CYCLE = ["hianime", "allanime", "gogo", "tokyoinsider", "animepahe", "animetsu", "aniwatch"]
 
 SOURCE_NAMES = {
+    "tokyoinsider": "🎬 TokyoInsider",
     "animetsu": "🌐 Animetsu",
     "aniwatch": "📺 AniWatch",
     "hianime": "⚡ Hianime",

@@ -84,6 +84,9 @@ MODULES = [
         {"cmd": "/autorename clear", "desc": "Clear auto-rename template"},
     ]},
     # ── Settings ──
+    {"id": "nyaa", "name": "Nyaa", "desc": "Search Nyaa torrents and leech them.", "cat": "Leech", "cmds": [
+        ("/nyaasearch <query>", "Search Nyaa, tap a torrent to leech"),
+    ]},
     {"id": "settings", "name": "Settings", "desc": "Configure bot preferences and options.", "cat": "Settings", "cmds": [
         {"cmd": "/settings", "desc": "Open interactive settings menu"},
     ]},

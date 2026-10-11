@@ -8,6 +8,7 @@
 from . import admin
 from . import autorename
 from . import downloads
+from . import nyaa
 from . import options
 from . import rss
 from . import screenshot

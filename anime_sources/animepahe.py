@@ -13,6 +13,13 @@ import json
 import re
 from urllib.parse import quote_plus
 
+try:
+    # Chrome TLS impersonation — animepahe/DDoS-Guard reject python-requests
+    # fingerprints (TLSV1_ALERT_INTERNAL_ERROR on datacenter IPs).
+    from curl_cffi import requests as _c_requests
+except ImportError:  # pragma: no cover
+    _c_requests = None
+
 import requests
 
 from anime_sources.base import (
@@ -27,17 +34,21 @@ class AnimePaheSource(BaseProvider):
     id = "animepahe"
     name = "AnimePahe"
 
-    def _get(self, url: str, params: dict = None) -> requests.Response:
-        resp = requests.get(
-            url,
+    def _get(self, url: str, params: dict = None):
+        kwargs = dict(
             params=params,
             headers={
                 "User-Agent": DEFAULT_UA,
                 "Referer": BASE,
                 "Cookie": "__ddg2_=",
             },
-            timeout=15,
+            timeout=20,
         )
+        if _c_requests is not None:
+            # impersonated Chrome TLS stack — avoids the fingerprint block
+            resp = _c_requests.get(url, impersonate="chrome", **kwargs)
+        else:
+            resp = requests.get(url, **kwargs)
         if resp.status_code != 200:
             raise SourceError(f"AnimePahe: HTTP {resp.status_code}")
         return resp
