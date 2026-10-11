@@ -379,6 +379,127 @@ async def check_and_download_ongoing(client: Client, chat_id: int):
         except Exception as e:
             print(f"Error processing {anime['title']}: {e}")
 
+
+async def check_mapped_anime(client: Client, chat_id: int):
+    """Watch every /setmap'd anime across the healthy multi-source providers.
+
+    The site-based 'recently updated' feeds die whenever animetsu/aniwatchtv
+    rot or block the server. This watcher instead searches the mapped anime
+    names on the API providers (hianime/allanime/gogo/...) every cycle and
+    downloads episodes that were never processed — fully independent of the
+    legacy sites. Backlog guard: at most the 3 newest episodes run per cycle;
+    a huge backlog (>10) is marked processed so history doesn't queue-dump
+    (use the batch 'Download All' flow for old episodes).
+    """
+    try:
+        mappings = await db.get_all_mappings()
+    except Exception as e:
+        print(f"Mapped watcher: cannot load mappings: {e}")
+        return
+    if not mappings:
+        return
+
+    from anime_sources import search_provider, get_provider
+    from anime_sources.base import SOURCE_CYCLE
+
+    active_source = await db.get_user_setting(0, "active_source", "hianime")
+    order = [s for s in ([active_source] + SOURCE_CYCLE)
+             if s not in ("animetsu", "aniwatch")]  # legacy sites: DNS-dead
+    seen = set()
+    order = [s for s in order if not (s in seen or seen.add(s))]
+
+    for doc in mappings:
+        channel_id = doc.get("_id")
+        for name in doc.get("anime_names", []) or []:
+            found = None
+            for src in order:
+                try:
+                    res = await asyncio.to_thread(search_provider, src, name)
+                except Exception:
+                    res = []
+                if res:
+                    found = res[0]
+                    break
+            if not found:
+                print(f"Mapped watcher: no healthy source answered for '{name}'")
+                continue
+
+            provider_id, _, provider_anime_id = found["id"].partition(":")
+            try:
+                provider = get_provider(provider_id)
+                eps = await asyncio.to_thread(provider.episodes, provider_anime_id)
+            except Exception as e:
+                print(f"Mapped watcher: episode list failed for '{name}' ({provider_id}): {e}")
+                continue
+
+            try:
+                eps.sort(key=lambda e: float(str(e.number)), reverse=True)
+            except (ValueError, TypeError):
+                pass
+
+            pending = []
+            db_ok = True
+            for ep in eps:
+                ep_id = f"{found['id']}::{ep.number}"
+                try:
+                    done = bool(await db.is_processed(ep_id))
+                except Exception as e:
+                    # A DB hiccup must never look like "unprocessed" —
+                    # that would re-download everything. Skip the cycle.
+                    print(f"Mapped watcher: is_processed unavailable for '{name}' — skipping this cycle ({e})")
+                    db_ok = False
+                    break
+                if not done:
+                    pending.append((ep, ep_id))
+
+            if not db_ok or not pending:
+                continue
+
+            # Backlog guard: a fresh mapping of a 1000-ep show must not
+            # queue-dump the instance. Keep the 3 newest, retire the rest.
+            if len(pending) > 10:
+                for _, retire_id in pending[3:]:
+                    try:
+                        await db.mark_processed(retire_id)
+                    except Exception:
+                        pass
+                print(
+                    f"Mapped watcher: '{name}' has {len(pending)} unprocessed episodes — "
+                    f"history retired, downloading the 3 newest only "
+                    f"(use batch 'Download All' for old episodes)"
+                )
+                pending = pending[:3]
+
+            for ep, ep_id in pending:
+                print(f"Mapped watcher: new episode {ep.number} of {name} ({provider_id})")
+                log_id = int(LOG_CHANNEL) if LOG_CHANNEL else chat_id
+                try:
+                    status_msg = await client.send_message(
+                        log_id,
+                        f"<blockquote>🔄 ᴀᴜᴛᴏ-ᴅᴏᴡɴʟᴏᴀᴅɪɴɢ (ᴡᴀᴛᴄʜᴇᴅ): {name} — EP {ep.number}…</blockquote>",
+                        parse_mode=ParseMode.HTML,
+                    )
+                except Exception:
+                    status_msg = None
+                try:
+                    uploaded_msgs, quality_map = await _handle_download(
+                        client, None, ep.url,
+                        status_msg,
+                        is_playlist=False, quality="auto", chat_id=chat_id,
+                        name_override=name,
+                        season_override="1",
+                        ep_num_override=str(ep.number),
+                    )
+                    if uploaded_msgs:
+                        await post_to_main_channel(
+                            client, ep.url, uploaded_msgs, quality_map,
+                            None, "1", str(ep.number),
+                        )
+                    await db.mark_processed(ep_id)
+                except Exception as e:
+                    print(f"Mapped watcher: download failed for {name} EP {ep.number}: {e}")
+
+
 async def ongoing_task(client: Client):
     if not TARGET_CHAT_ID:
         print("WARNING: TARGET_CHAT_ID is not set in environment or config.py. Ongoing auto-downloads are disabled.")
@@ -399,6 +520,12 @@ async def ongoing_task(client: Client):
                 await check_and_download_ongoing(client, target_chat_id)
             except Exception as e:
                 print(f"Error in ongoing task loop: {e}")
+            # Provider-based watcher — keeps working even when both
+            # legacy site feeds are down (dead DNS / TLS blocks).
+            try:
+                await check_mapped_anime(client, target_chat_id)
+            except Exception as e:
+                print(f"Error in mapped-anime watcher: {e}")
         else:
             pass  # Paused via /settings, loop stays alive
 

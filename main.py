@@ -100,6 +100,7 @@ async def start_health_server():
     web_app = web.Application()
     web_app.router.add_get("/", handle_root)
     web_app.router.add_get("/health", handle_health)
+    web_app.router.add_get("/", handle_health)   # Render HEAD / probes → 200
     runner = web.AppRunner(web_app)
     await runner.setup()
     port = int(os.environ.get("PORT", "8080"))

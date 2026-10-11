@@ -295,7 +295,7 @@ async def rss_poller():
         # Sleep interval (use shortest feed interval, default 15 min)
         feeds = load_feeds()
         interval = min((f.get("interval", _DEFAULT_INTERVAL) for f in feeds if f.get("enabled", True)), default=_DEFAULT_INTERVAL)
-        await sleep(interval * 60)
+        await sleep(max(1, int(interval)) * 60)  # clamp: a 0/negative interval must not tight-loop
 
     logger.info("RSS poller stopped")
 

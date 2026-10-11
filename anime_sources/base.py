@@ -120,7 +120,7 @@ def get_provider(provider_id: str) -> BaseProvider:
 
 # Sources available in the /manage source cycle (order matters).
 # Legacy sources ("animetsu", "aniwatch") are handled by the original scrapers.
-SOURCE_CYCLE = ["animetsu", "aniwatch", "hianime", "allanime", "gogo", "animepahe"]
+SOURCE_CYCLE = ["hianime", "allanime", "gogo", "animepahe", "animetsu", "aniwatch"]
 
 SOURCE_NAMES = {
     "animetsu": "🌐 Animetsu",
