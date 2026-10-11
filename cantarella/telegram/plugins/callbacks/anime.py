@@ -478,6 +478,27 @@ async def on_episode_select(client: Client, callback_query):
             parse_mode=ParseMode.HTML
         )
 
+    # ── Speed: prefetch the stream resolution in the background NOW, so the
+    # quality tap a few seconds later starts downloading instantly ──
+    try:
+        from anime_sources import is_provider_url, get_provider, provider_id_for_url
+        from anime_sources.base import cached_streams
+        ep_data = user_episodes[user_id]['episodes'][ep_idx]
+        ep_url = ep_data.get("url", "")
+        if is_provider_url(ep_url):
+            pid = provider_id_for_url(ep_url)
+
+            def _prefetch():
+                try:
+                    cached_streams(f"res:{pid}:{ep_url}",
+                                   get_provider(pid).resolve, ep_url)
+                except Exception:
+                    pass  # prefetch is best-effort; real path retries
+
+            asyncio.get_running_loop().run_in_executor(None, _prefetch)
+    except Exception:
+        pass
+
 
 # ─────────────────────────────────────────────
 #  Stream-link mode — resolve + share direct m3u8 (no download)
@@ -514,7 +535,10 @@ async def on_stream_link(client: Client, callback_query):
 
     provider = get_provider(provider_id_for_url(ep_url))
     try:
-        resolved = await client.loop.run_in_executor(None, provider.resolve, ep_url)
+        from anime_sources.base import cached_streams
+        resolved = await client.loop.run_in_executor(
+            None, lambda: cached_streams(
+                f"res:{provider.id}:{ep_url}", provider.resolve, ep_url))
     except Exception as e:
         return await callback_query.message.reply(
             f"<blockquote>❌ <b>ꜱᴛʀᴇᴀᴍ ʀᴇꜱᴏʟᴜᴛɪᴏɴ ғᴀɪʟᴇᴅ:</b> {e}</blockquote>",

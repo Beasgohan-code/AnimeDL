@@ -80,10 +80,11 @@ def download_provider_episode(url: str, download_path: Path, progress_queue,
     # (Cloudflare interstitials, AJAX blips), and a batch/auto run should
     # not lose an episode to a one-off hiccup.
     resolved = None
-    from anime_sources.base import SourceError as _SE
+    from anime_sources.base import SourceError as _SE, cached_streams as _cs
     for _attempt in range(2):
         try:
-            resolved = provider.resolve(url)
+            # cache-hit when the quality menu prefetched this episode already
+            resolved = _cs(f"res:{provider_id}:{url}", provider.resolve, url)
             break
         except (_SE, requests.RequestException) as e:
             if _attempt:

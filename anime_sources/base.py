@@ -104,6 +104,8 @@ class BaseProvider:
 # --------------------------------------------------------------------------
 _EP_CACHE = {}
 _EP_CACHE_TTL = 120.0
+_STREAM_CACHE = {}
+_STREAM_CACHE_TTL = 600.0
 
 
 def cached_episodes(cache_key: str, fetch, *args):
@@ -115,6 +117,26 @@ def cached_episodes(cache_key: str, fetch, *args):
         return list(hit[1])
     val = fetch(*args)
     _EP_CACHE[cache_key] = (now, val)
+    return val
+
+
+def cached_streams(cache_key: str, fetch, *args):
+    """Cache resolved stream URLs (10 min TTL).
+
+    Stream links stay valid for hours but we keep the window short on
+    purpose: the point is to make a quality pick that happens seconds
+    after the menu rendered ~instant, not to serve stale links.
+    """
+    import time as _t
+    hit = _STREAM_CACHE.get(cache_key)
+    now = _t.time()
+    if hit and now - hit[0] < _STREAM_CACHE_TTL:
+        return hit[1]
+    val = fetch(*args)
+    if len(_STREAM_CACHE) > 256:  # keep memory bounded
+        oldest = min(_STREAM_CACHE, key=lambda k: _STREAM_CACHE[k][0])
+        _STREAM_CACHE.pop(oldest, None)
+    _STREAM_CACHE[cache_key] = (now, val)
     return val
 
 

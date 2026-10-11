@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 # Version
 # ============================================================================
-VERSION = os.getenv("VERSION", "4.10.0")
+VERSION = os.getenv("VERSION", "4.11.0")
 BUILD_DATE = os.getenv("BUILD_DATE", "2026-10-11")
 BOT_REPO = os.getenv("BOT_REPO", "https://github.com/Beasgohan-code/AnimeDL")
 
