@@ -26,7 +26,7 @@ def search_anime(query, source="aniwatch"):
         proxy_dict = get_proxy_dict(get_random_proxy())
         if proxy_dict:
             session.proxies.update(proxy_dict)
-        resp = session.get(search_url, headers=HEADERS, impersonate="chrome")
+        resp = session.get(search_url, headers=HEADERS, impersonate="chrome", timeout=15)
         if resp.status_code != 200:
             return []
 
@@ -69,3 +69,33 @@ def search_anime(query, source="aniwatch"):
 
 if __name__ == '__main__':
     print(search_anime('naruto'))
+
+
+def search_anime_multi(query, source="animetsu", max_sources=5):
+    """Search the active source first, then fall back through the engine.
+
+    Sites like animetsu/aniwatchtv rot or block server IPs behind Cloudflare;
+    when that happens users used to get a bare "no anime found" even though
+    7 healthy providers were idle. This walks a fallback order instead.
+
+    Returns (results, tried):
+      results — first non-empty result list found ([] if every source failed)
+      tried   — [(source_key, outcome)] for honest user-facing diagnostics
+    """
+    from anime_sources.base import SOURCE_CYCLE
+
+    order = [source] + [s for s in SOURCE_CYCLE if s != source] + ["aniwatch"]
+    seen = set()
+    order = [s for s in order if not (s in seen or seen.add(s))]
+
+    tried, results = [], []
+    for key in order[:max(1, max_sources)]:
+        try:
+            results = search_anime(query, key) or []
+            outcome = f"{len(results)} found" if results else "no results"
+        except Exception as e:
+            results, outcome = [], f"error: {type(e).__name__}"
+        tried.append((key, outcome))
+        if results:
+            break
+    return results, tried

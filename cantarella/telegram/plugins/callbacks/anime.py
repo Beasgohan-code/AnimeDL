@@ -613,18 +613,25 @@ async def on_ani_search(client: Client, callback_query):
     except Exception:
         pass
 
-    from cantarella.scraper.search import search_anime
+    from cantarella.scraper.search import search_anime_multi
+    from anime_sources.base import SOURCE_NAMES
     from cantarella.core.database import db as _db
     active_source = await _db.get_user_setting(0, "active_source", "animetsu")
-    results = await client.loop.run_in_executor(None, search_anime, name, active_source)
+    results, tried = await client.loop.run_in_executor(None, search_anime_multi, name, active_source)
 
     if not results:
+        import html as _html
+        tried_line = " · ".join(f"{SOURCE_NAMES.get(s, s)}: {o}" for s, o in tried)
         return await callback_query.edit_message_caption(
-            caption="<blockquote>❌ ɴᴏ ʀᴇsᴜʟᴛꜱ ꜰᴏᴜɴᴅ ᴏɴ ᴛʜᴇ ᴀᴄᴛɪᴠᴇ sᴏᴜʀᴄᴇ.</blockquote>",
+            caption=(
+                "<blockquote>❌ ɴᴏ ʀᴇꜰᴜʟᴛꜰ ᴀᴄᴛɪꜱᴇ ᴏɴ ᴀɴꜱ ꜰᴏᴜʀᴄᴇ.</blockquote>\n"
+                f"<blockquote>🔎 {_html.escape(tried_line)}</blockquote>"
+            ),
             parse_mode=ParseMode.HTML,
         )
 
     user_search_results[user_id] = results
+    served_by = SOURCE_NAMES.get(tried[-1][0], tried[-1][0])
     buttons = []
     for res in results[:10]:
         cb = f"anime_{res['id']}"[:64]
@@ -633,13 +640,13 @@ async def on_ani_search(client: Client, callback_query):
 
     try:
         await callback_query.edit_message_caption(
-            caption="<blockquote>📺 <b>ꜱᴇᴀʀᴄʜ ʀᴇsᴜʟᴛꜱ:</b>\nꜱᴇʟᴇᴄᴛ ᴀɴ ᴀɴɪᴍᴇ:</blockquote>",
+            caption=f"<blockquote>📺 <b>ꜱᴇᴀʀᴄʜ ʀᴇsᴜʟᴛꜱ:</b>\nꜱᴇʟᴇᴄᴛ ᴀɴ ᴀɴɪᴍᴇ:</blockquote>\nꜱᴇʀᴠᴇᴅ ʙʏ: {served_by}</blockquote>",
             reply_markup=InlineKeyboardMarkup(buttons),
             parse_mode=ParseMode.HTML,
         )
     except Exception:
         await callback_query.message.reply(
-            "<blockquote>📺 <b>ꜱᴇᴀʀᴄʜ ʀᴇsᴜʟᴛꜱ:</b>\nꜱᴇʟᴇᴄᴛ ᴀɴ ᴀɴɪᴍᴇ:</blockquote>",
+            f"<blockquote>📺 <b>ꜱᴇᴀʀᴄʜ ʀᴇsᴜʟᴛꜱ:</b>\nꜱᴇʟᴇᴄᴛ ᴀɴ ᴀɴɪᴍᴇ:</blockquote>\nꜱᴇʀᴠᴇᴅ ʙʏ: {served_by}</blockquote>",
             reply_markup=InlineKeyboardMarkup(buttons),
             parse_mode=ParseMode.HTML,
         )

@@ -45,7 +45,7 @@ class AnimetsuScraper:
     def search_anime(self, query):
         url = f"{self.API_URL}/anime/search?query={query.replace(' ', '+')}"
         try:
-            resp = self.session.get(url, headers=self.HEADERS, impersonate="chrome120")
+            resp = self.session.get(url, headers=self.HEADERS, impersonate="chrome120", timeout=15)
             if resp.status_code == 200:
                 data = resp.json()
                 results = []
@@ -80,7 +80,7 @@ class AnimetsuScraper:
 
         url = f"{self.API_URL}/anime/eps/{anime_id}"
         try:
-            resp = self.session.get(url, headers=self.HEADERS, impersonate="chrome120")
+            resp = self.session.get(url, headers=self.HEADERS, impersonate="chrome120", timeout=15)
             if resp.status_code == 200:
                 data = resp.json()
                 results = []
@@ -111,7 +111,7 @@ class AnimetsuScraper:
         if date_str:
             url += f"?date={date_str}"
         try:
-            resp = self.session.get(url, headers=self.HEADERS, impersonate="chrome120")
+            resp = self.session.get(url, headers=self.HEADERS, impersonate="chrome120", timeout=15)
             if resp.status_code == 200:
                 data = resp.json()
                 results = []
@@ -163,7 +163,7 @@ class AnimetsuScraper:
     def fetch_recently_updated(self, page=1, per_page=12):
         url = f"{self.API_URL}/anime/recent?page={page}&per_page={per_page}"
         try:
-            resp = self.session.get(url, headers=self.HEADERS, impersonate="chrome120")
+            resp = self.session.get(url, headers=self.HEADERS, impersonate="chrome120", timeout=15)
             if resp.status_code == 200:
                 data = resp.json()
                 results = []

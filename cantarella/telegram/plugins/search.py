@@ -35,12 +35,25 @@ async def handle_url(client: Client, message):
             parse_mode=ParseMode.HTML
         )
         active_source = await db.get_user_setting(0, "active_source", "animetsu")
-        results = await asyncio.to_thread(search_anime, url, source=active_source)
+        from cantarella.scraper.search import search_anime_multi
+        from anime_sources.base import SOURCE_NAMES
+        results, tried = await asyncio.to_thread(search_anime_multi, url, active_source)
         if not results:
-            await status_msg.edit_caption("<blockquote>❌ <b>ɴᴏ ᴀɴɪᴍᴇ ғᴏᴜɴᴅ ғᴏʀ ʏᴏᴜʀ ǫᴜᴇʀʏ.</b>\nᴘʟᴇᴀꜱᴇ ᴘʀᴏᴠɪᴅᴇ ᴀ ᴠᴀʟɪᴅ ᴜʀʟ ᴏʀ ᴛʀʏ ᴀɴᴏᴛʜᴇʀ ꜱᴇᴀʀᴄʜ.</blockquote>", parse_mode=ParseMode.HTML)
+            tried_line = " · ".join(
+                f"{SOURCE_NAMES.get(s, s)}: {o}" for s, o in tried
+            )
+            import html as _html
+            await status_msg.edit_caption(
+                "<blockquote>❌ <b>ɴᴏ ᴀɴɪᴍᴇ ғᴏᴜɴᴅ ғᴏʀ ʏᴏᴜʀ ǫᴜᴇʀʏ.</b></blockquote>\n"
+                f"<blockquote>🔎 ꜱᴏᴜʀᴄᴇs ᴛʀɪᴇᴅ: {_html.escape(tried_line)}\n\n"
+                "💡 ᴛʜᴇ sɪᴛᴇs ᴍᴀʏ ʙᴇ ʙʟᴏᴄᴋɪɴɢ ᴛʜɪs sᴇʀᴠᴇʀ's ɪᴘ ᴏʀ ᴅᴏᴡɴ ʀɪɢʜᴛ ɴᴏᴡ.\n"
+                "ʀᴇᴛʀʏ ɪɴ ᴀ ᴍɪɴᴜᴛᴇ ᴏʀ ᴄʜᴀɴɢᴇ ᴛʜᴇ ꜱᴏᴜʀᴄᴇ ɪɴ /ꜱᴇᴛᴛɪɴɢꜱ.</blockquote>",
+                parse_mode=ParseMode.HTML
+            )
             return
 
         user_search_results[message.from_user.id] = results
+        served_by = SOURCE_NAMES.get(tried[-1][0], tried[-1][0])
 
         buttons = []
         for res in results:
@@ -54,7 +67,7 @@ async def handle_url(client: Client, message):
 
         keyboard = InlineKeyboardMarkup(buttons)
         await status_msg.edit_caption(
-            caption="<blockquote>📺 <b>ꜱᴇᴀʀᴄʜ ʀᴇꜱᴜʟᴛꜱ:</b>\nꜱᴇʟᴇᴄᴛ ᴀɴ ᴀɴɪᴍᴇ:</blockquote>",
+            caption=f"<blockquote>📺 <b>ꜱᴇᴀʀᴄʜ ʀᴇꜱᴜʟᴛꜱ:</b>\nꜱᴇʀᴠᴇᴅ ʙʏ: {served_by}</blockquote>",
             reply_markup=keyboard,
             parse_mode=ParseMode.HTML
         )
