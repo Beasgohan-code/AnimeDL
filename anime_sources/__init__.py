@@ -15,6 +15,8 @@ import os
 import re
 from pathlib import Path
 
+import requests
+
 from anime_sources.base import (  # noqa: F401
     BaseProvider, Episode, ResolvedEpisode, SearchResult, SourceError,
     Stream, get_provider, is_provider_url, provider_id_for_url,
@@ -74,7 +76,25 @@ def download_provider_episode(url: str, download_path: Path, progress_queue,
     provider_id = provider_id_for_url(url)
     provider = get_provider(provider_id)
 
-    resolved = provider.resolve(url)
+    # Retry the resolve step once — embed/server pages fail transiently
+    # (Cloudflare interstitials, AJAX blips), and a batch/auto run should
+    # not lose an episode to a one-off hiccup.
+    resolved = None
+    from anime_sources.base import SourceError as _SE
+    for _attempt in range(2):
+        try:
+            resolved = provider.resolve(url)
+            break
+        except (_SE, requests.RequestException) as e:
+            if _attempt:
+                raise
+            logging.getLogger(__name__).info(
+                "resolve failed for %s (%s) — retrying once", url, e
+            )
+            import time as _t
+            _t.sleep(1.5)
+    if resolved is None:
+        raise _SE(f"resolve failed for {url}")
     title = name_override or resolved.title or title_fallback or "Anime"
     ep_num = str(ep_num_override or resolved.ep_num or ep_num_fallback or "1")
     season = str(season_override or resolved.season or "1")

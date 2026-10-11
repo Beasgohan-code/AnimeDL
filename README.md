@@ -84,6 +84,8 @@ Powered by [richgram](https://github.com/Badmunda05/richgram):
 | `/anime <name>` | AniList info card → search & download |
 | `/nextep <name>` | Next episode countdown (sub/dub) |
 | `/history` | Continue watching — one-tap next episode |
+| `/nyaasearch <q>` | Search Nyaa torrents → one-tap leech (season packs) |
+| `/tosho <q>` | AnimeTosho DDL search → one-tap leech (no torrents needed) |
 | `/manage` | Anime bot settings (admin) |
 | `/autodel` | Auto-delete timer for posted files (admin) |
 | `t.me-link` · MediaFire · PixelDrain · Gofile · Terabox · Mega · … | Send any supported link → leech menu |

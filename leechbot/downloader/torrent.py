@@ -47,6 +47,7 @@ def _check_libtorrent():
     if lt is None:
         raise ImportError(
             "libtorrent is not installed. Install it via:\n"
+            "  • pip: pip install libtorrent  (this is how the Docker image ships it)\n"
             "  • Debian/Ubuntu: sudo apt install python3-libtorrent\n"
             "  • Conda:         conda install -c conda-forge libtorrent\n"
             "  • Arch:          sudo pacman -S libtorrent-rasterbar\n"

@@ -47,3 +47,4 @@ GPUtil>=1.4.0
 #   • Docker:         handled by the Dockerfile
 #   • N_m3u8DL-RE:    bundled in binary/ (Linux x64) — run scripts/fetch_binary.py
 #                     to fetch builds for other platforms.
+libtorrent>=2.0.8

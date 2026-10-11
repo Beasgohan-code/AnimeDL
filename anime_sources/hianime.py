@@ -12,13 +12,20 @@
 import base64
 import html as html_mod
 import json
+import os
 import re
 
 from anime_sources.base import (
     BaseProvider, Episode, ResolvedEpisode, SearchResult, SourceError, DEFAULT_UA,
 )
 
-BASE = "https://hianime.at"
+BASES = [b for b in (
+    os.getenv("ANIMEDL_HIANIME_BASE") or None,   # custom mirror wins
+    "https://hianime.at",
+    "https://hianime.bz",
+    "https://hianime.nz",
+) if b]
+BASE = BASES[0]
 XOR_KEY = b"otaku-embed-v1"          # ani-cli v5: deobfuscate_blob key
 IMPERSONATE = "chrome124"
 
@@ -40,9 +47,19 @@ class HianimeSource(BaseProvider):
             raise SourceError(f"Hianime: HTTP {resp.status_code}")
         return resp.text
 
+    def _fetch(self, path: str, headers: dict = None) -> str:
+        """GET a site-relative path, walking the mirror chain on failure."""
+        last = None
+        for b in BASES:
+            try:
+                return self._get(f"{b}{path}", headers=headers)
+            except Exception as e:
+                last = e
+        raise last or SourceError("Hianime: all mirrors failed")
+
     # ---------------------------------------------------------------- search
     def search(self, query: str) -> list:
-        page = self._get(f"{BASE}/search?keyword={query.replace(' ', '+')}")
+        page = self._fetch("/search?keyword={query.replace(' ', '+')}")
         if "Just a moment" in page:
             raise SourceError("Hianime is Cloudflare-blocked from this server right now.")
 
@@ -70,7 +87,7 @@ class HianimeSource(BaseProvider):
     def episodes(self, anime_id: str) -> list:
         # ids carry a numeric suffix: "solo-leveling-383"
         numeric_id = anime_id.rsplit("-", 1)[-1]
-        page = self._get(f"{BASE}/api/theme/episode/list/{numeric_id}")
+        page = self._fetch("/api/theme/episode/list/{numeric_id}")
         page = page.replace("\\", "")
 
         eps = []
@@ -100,7 +117,7 @@ class HianimeSource(BaseProvider):
         numeric_id = slug.rsplit("-", 1)[-1]
 
         # episode list → data-id for this episode number
-        listing = self._get(f"{BASE}/api/theme/episode/list/{numeric_id}").replace("\\", "")
+        listing = self._fetch("/api/theme/episode/list/{numeric_id}").replace("\\", "")
         ep_data_id = None
         for chunk in listing.split("ep-item")[1:]:
             if re.search(rf'data-number="{re.escape(ep_num)}"', chunk):
@@ -112,8 +129,8 @@ class HianimeSource(BaseProvider):
             raise SourceError("Hianime: episode not found in listing")
 
         # servers → ZokoAnime embed for the wanted audio mode
-        servers = self._get(
-            f"{BASE}/api/theme/episode/servers?episodeId={ep_data_id}"
+        servers = self._fetch(
+            f"/api/theme/episode/servers?episodeId={ep_data_id}"
         ).replace('\\"', '"')
         data_hash = None
         for line in servers.split("server-item"):

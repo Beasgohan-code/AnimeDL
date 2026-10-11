@@ -26,8 +26,28 @@ class GogoSource(BaseProvider):
     name = "GogoAnime"
 
     @property
+    def bases(self) -> list:
+        """Mirror chain: custom env override wins, else bid -> anitaku.bz
+        (the anitaku.bz mirror comes straight from otaku-watcher-contrib's
+        anitaku.py — same gogo-family paths, second domain to ride on)."""
+        custom = os.getenv("GOGO_BASE")
+        if custom:
+            return [custom.rstrip("/")]
+        return ["https://gogoanime.bid", "https://anitaku.bz"]
+
+    @property
     def base(self) -> str:
-        return os.getenv("GOGO_BASE", "https://gogoanime.bid/").rstrip("/")
+        return self.bases[0]
+
+    def _fetch(self, path: str, **kw) -> requests.Response:
+        """GET a site-relative path, walking the mirror chain on failure."""
+        last = None
+        for b in self.bases:
+            try:
+                return self._get(f"{b}{path}", **kw)
+            except (SourceError, requests.RequestException) as e:
+                last = e
+        raise last or SourceError("Gogo: all mirrors failed")
 
     def _get(self, url: str, **kw) -> requests.Response:
         resp = requests.get(url, headers={"User-Agent": DEFAULT_UA}, timeout=15, **kw)
@@ -37,7 +57,7 @@ class GogoSource(BaseProvider):
 
     # ---------------------------------------------------------------- search
     def search(self, query: str) -> list:
-        resp = self._get(f"{self.base}/search.html", params={"keyword": query})
+        resp = self._fetch("/search.html", params={"keyword": query})
         results = []
         for m in re.finditer(
             r'<p class="name">\s*<a href="(/category/[^"]+)"[^>]*>([^<]+)</a>', resp.text
@@ -50,7 +70,7 @@ class GogoSource(BaseProvider):
 
     # -------------------------------------------------------------- episodes
     def episodes(self, anime_id: str) -> list:
-        page = self._get(f"{self.base}/category/{anime_id}").text
+        page = self._fetch(f"/category/{anime_id}").text
         m = re.search(r'<input.+?value="(\d+)" id="movie_id"', page)
         if not m:
             raise SourceError("Gogo: anime page did not expose its id")

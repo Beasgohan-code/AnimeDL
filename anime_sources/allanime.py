@@ -73,13 +73,24 @@ class AllAnimeSource(BaseProvider):
 
     # ------------------------------------------------------------------ http
     def _gql(self, variables: dict, query: str) -> dict:
-        resp = requests.post(
-            API,
-            json={"variables": variables, "query": query},
-            headers={"Referer": REFERER, "User-Agent": UA,
-                     "Content-Type": "application/json"},
-            timeout=15,
-        )
+        last_exc = None
+        for attempt in range(2):   # one retry for transient network blips
+            try:
+                resp = requests.post(
+                    API,
+                    json={"variables": variables, "query": query},
+                    headers={"Referer": REFERER, "User-Agent": UA,
+                             "Content-Type": "application/json"},
+                    timeout=15,
+                )
+                if resp.status_code != 200:
+                    raise SourceError(f"AllAnime: HTTP {resp.status_code}")
+                return resp.json()
+            except requests.RequestException as e:
+                last_exc = e
+                import time as _t
+                _t.sleep(1.2)
+        raise last_exc or SourceError("AllAnime: request failed")
         if resp.status_code != 200:
             raise SourceError(f"AllAnime: HTTP {resp.status_code}")
         return resp.json()

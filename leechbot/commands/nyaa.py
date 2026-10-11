@@ -159,6 +159,15 @@ async def on_nyaa_pick(client, callback_query):
 
     # Feed the leech engine exactly like a pasted magnet + custom name,
     # then reuse the standard upload-type flow ("normal" = upload as-is).
+    try:
+        import libtorrent  # noqa: F401
+    except ImportError:
+        return await callback_query.answer(
+            "Torrent engine not installed on this deployment — "
+            "use /tosho instead: AnimeTosho serves the same torrents "
+            "as direct downloads (no torrent client needed).",
+            show_alert=True,
+        )
     BOT.SOURCE = [picked["magnet"]]
     BOT.Options.custom_name = _sanitize(picked["title"])
     try:
