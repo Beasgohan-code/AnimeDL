@@ -109,6 +109,9 @@ def get_provider(provider_id: str) -> BaseProvider:
     if provider_id == "gogo":
         from anime_sources.gogo import GogoSource
         return GogoSource()
+    if provider_id == "zangetsu":
+        from anime_sources.zangetsu import ZangetsuSource
+        return ZangetsuSource()
     if provider_id == "tokyoinsider":
         from anime_sources.tokyoinsider import TokyoInsiderSource
         return TokyoInsiderSource()
@@ -123,9 +126,10 @@ def get_provider(provider_id: str) -> BaseProvider:
 
 # Sources available in the /manage source cycle (order matters).
 # Legacy sources ("animetsu", "aniwatch") are handled by the original scrapers.
-SOURCE_CYCLE = ["hianime", "allanime", "gogo", "tokyoinsider", "animepahe", "animetsu", "aniwatch"]
+SOURCE_CYCLE = ["hianime", "zangetsu", "allanime", "gogo", "tokyoinsider", "animepahe", "animetsu", "aniwatch"]
 
 SOURCE_NAMES = {
+    "zangetsu": "🌀 Zangetsu",
     "tokyoinsider": "🎬 TokyoInsider",
     "animetsu": "🌐 Animetsu",
     "aniwatch": "📺 AniWatch",
@@ -189,7 +193,9 @@ def provider_id_for_url(url: str) -> str:
         return "consumet"
     if u.startswith("aniwatchapi://"):
         return "aniwatchapi"
-    if "hianime.at/" in u:
+    if u.startswith("zangetsu://") or "zangetsu" in u:
+        return "zangetsu"
+    if "hianime" in u:
         return "hianime"
     if "gogoanime" in u:
         return "gogo"

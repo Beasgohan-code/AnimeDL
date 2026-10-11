@@ -152,50 +152,62 @@ class HianimeSource(BaseProvider):
         if not data_hash:
             raise SourceError("Hianime: no ZokoAnime server available")
 
-        embed = base64.b64decode(data_hash).decode()
-        referer = re.sub(r"^(https?://[^/]*).*", r"\1/", embed)
-
-        # embed page → window.__P blob → XOR-deobfuscated JSON
-        embed_page = self._get(embed)
-        m_blob = re.search(r'window\.__P="([^"]*)"', embed_page)
-        if not m_blob:
-            raise SourceError("Hianime: embed payload missing")
-        payload = self._deobfuscate(m_blob.group(1))
-        data = json.loads(payload)
-
-        master = re.search(r'"src":"([^"]*\.m3u8[^"]*)"', payload)
-        if not master:
-            raise SourceError("Hianime: no m3u8 in embed payload")
-
-        # master playlist → quality variants
-        master_url = master.group(1).replace("\\/", "/")
-        streams = []
+        # ── Primary path: ZokoAnime embed (window.__P XOR blob → m3u8) ──
+        # ── Fallback path: megaplay/vidwish getSources (weeb-cli port) ──
+        streams, subtitles = [], []
         try:
-            m3u8_body = self._get(master_url, headers={"Referer": referer})
-            lines = m3u8_body.splitlines()
-            for i, line in enumerate(lines):
-                if line.startswith("#EXT-X-STREAM-INF"):
-                    m_res = re.search(r"RESOLUTION=\d+x(\d+)", line)
-                    target = lines[i + 1].strip() if i + 1 < len(lines) else ""
-                    if not target:
-                        continue
-                    from urllib.parse import urljoin
-                    streams.append({
-                        "quality": m_res.group(1) if m_res else "auto",
-                        "url": urljoin(master_url, target),
-                    })
-        except Exception:
-            streams.append({"quality": "auto", "url": master_url})
-        if not streams:
-            streams.append({"quality": "auto", "url": master_url})
+            embed = base64.b64decode(data_hash).decode()
+            referer = re.sub(r"^(https?://[^/]*).*", r"\1/", embed)
 
-        subtitles = []
-        m_subs = re.search(r'"subtitles":\[(.*?)\]', payload)
-        if m_subs:
-            for sm in re.finditer(r'\{[^{}]*\}', m_subs.group(1)):
-                s_url = re.search(r'"src":"([^"]*)"', sm.group(0))
-                if s_url:
-                    subtitles.append(s_url.group(1).replace("\\/", "/"))
+            embed_page = self._get(embed)
+            m_blob = re.search(r'window\.__P="([^"]*)"', embed_page)
+            if not m_blob:
+                raise SourceError("Hianime: embed payload missing")
+            payload = self._deobfuscate(m_blob.group(1))
+
+            master = re.search(r'"src":"([^"]*\.m3u8[^"]*)"', payload)
+            if not master:
+                raise SourceError("Hianime: no m3u8 in embed payload")
+
+            master_url = master.group(1).replace("\\/", "/")
+            try:
+                m3u8_body = self._get(master_url, headers={"Referer": referer})
+                lines = m3u8_body.splitlines()
+                for i, line in enumerate(lines):
+                    if line.startswith("#EXT-X-STREAM-INF"):
+                        m_res = re.search(r"RESOLUTION=\d+x(\d+)", line)
+                        target = lines[i + 1].strip() if i + 1 < len(lines) else ""
+                        if not target:
+                            continue
+                        from urllib.parse import urljoin
+                        streams.append({
+                            "quality": m_res.group(1) if m_res else "auto",
+                            "url": urljoin(master_url, target),
+                        })
+            except Exception:
+                streams.append({"quality": "auto", "url": master_url})
+            if not streams:
+                streams.append({"quality": "auto", "url": master_url})
+
+            m_subs = re.search(r'"subtitles":\[(.*?)\]', payload)
+            if m_subs:
+                for sm in re.finditer(r'\{[^{}]*\}', m_subs.group(1)):
+                    s_url = re.search(r'"src":"([^"]*)"', sm.group(0))
+                    if s_url:
+                        subtitles.append(s_url.group(1).replace("\\/", "/"))
+        except Exception as zoko_err:
+            # ZokoAnime failed (embed gone / payload shape changed) →
+            # MegaPlay/Vidwish direct route on the same episode id.
+            from anime_sources.megacloud import megaplay_fallback
+            data_fb = megaplay_fallback(ep_data_id, mode)
+            if not data_fb or not data_fb.get("file"):
+                raise SourceError(
+                    f"Hianime: ZokoAnime failed ({zoko_err}) and MegaPlay fallback had no stream"
+                )
+            streams.append({"quality": "auto", "url": data_fb["file"]})
+            for tr in (data_fb.get("tracks") or []):
+                if isinstance(tr, dict) and str(tr.get("kind")) == "captions" and tr.get("file"):
+                    subtitles.append(tr["file"])
 
         def _sort_key(s):
             try:
