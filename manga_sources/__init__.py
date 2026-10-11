@@ -49,6 +49,27 @@ def get_provider(pid: str):
     if pid == "asura":
         from manga_sources.asura import AsuraProvider
         return AsuraProvider()
+    if pid == "weebcentral":
+        from manga_sources.weebcentral import WeebCentralProvider
+        return WeebCentralProvider()
+    if pid == "mgeko":
+        from manga_sources.mgeko import MgekoProvider
+        return MgekoProvider()
+    if pid == "manhuafast":
+        from manga_sources.wpmanga import ManhuaFastProvider
+        return ManhuaFastProvider()
+    if pid == "manhuaplus":
+        from manga_sources.wpmanga import ManhuaPlusProvider
+        return ManhuaPlusProvider()
+    if pid == "templetoons":
+        from manga_sources.wpmanga import TempleToonsProvider
+        return TempleToonsProvider()
+    if pid in ("manhwaclan", "manga18fx", "manhwa18"):
+        # 18+ sources: only when the operator opts in via env (public bot)
+        from manga_sources.nsfw import nsfw_enabled
+        if nsfw_enabled():
+            from manga_sources import nsfw as _nsfw
+            return _nsfw.NSFW_PROVIDERS[pid]()
     raise MangaError(f"unknown manga provider {pid}")
 
 
@@ -56,16 +77,49 @@ PROVIDER_NAMES = {
     "mangadex": "MangaDex",
     "comick": "Comick",
     "asura": "Asura Scans",
+    "weebcentral": "WeebCentral",
+    "mgeko": "Mgeko",
+    "manhuafast": "ManhuaFast",
+    "manhuaplus": "ManhuaPlus",
+    "templetoons": "TempleToons",
+    "manhwaclan": "ManhwaClan",
+    "manga18fx": "Manga18FX",
+    "manhwa18": "Manhwa18",
 }
 
-SEARCH_ORDER = ("mangadex", "comick", "asura")
+# default search order (SFW sources first; 18+ appended only when enabled)
+SEARCH_ORDER = ("mangadex", "comick", "asura", "weebcentral", "mgeko",
+                "manhuafast", "manhuaplus", "templetoons")
 
 
-def search_all(query: str, per_provider: int = 8) -> tuple:
+def _search_order() -> tuple:
+    from manga_sources.nsfw import nsfw_enabled
+    if nsfw_enabled():
+        return SEARCH_ORDER + ("manhwaclan", "manga18fx", "manhwa18")
+    return SEARCH_ORDER
+
+
+# what each provider's chapters() takes: the search result's id or url
+CHAPTERS_ARG = {
+    "mangadex": "id",
+    "comick": "id",
+    "asura": "url",
+    "weebcentral": "url",
+    "mgeko": "url",
+    "manhuafast": "url",
+    "manhuaplus": "id",     # id carries the resolved series url
+    "templetoons": "url",
+    "manhwaclan": "url",
+    "manga18fx": "url",
+    "manhwa18": "url",
+}
+
+
+def search_all(query: str, per_provider: int = 6) -> tuple:
     """Search every provider; returns (results, tried) where tried is
     [(provider_id, n_or_error)] so the UI can show health per source."""
     results, tried = [], []
-    for pid in SEARCH_ORDER:
+    for pid in _search_order():
         try:
             prov = get_provider(pid)
             found = prov.search(query)[:per_provider]

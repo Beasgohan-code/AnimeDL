@@ -115,13 +115,10 @@ async def on_manga_pick(client: Client, cq):
         pass
 
     def _work():
-        from manga_sources import get_provider
+        from manga_sources import get_provider, CHAPTERS_ARG
         prov = get_provider(pid)
-        if pid == "mangadex":
-            return prov, prov.chapters(manga.id)
-        if pid == "asura":
-            return prov, prov.chapters(manga.url)
-        return prov, prov.chapters(manga.id)   # comick: slug
+        arg = getattr(manga, CHAPTERS_ARG.get(pid, "id"))
+        return prov.chapters(arg)
 
     try:
         prov, chapters = await asyncio.get_event_loop().run_in_executor(None, _work)
@@ -282,7 +279,6 @@ async def on_manga_download(client: Client, cq):
                         status,
                         f"<blockquote>⬇️ <b>{manga.title[:30]}</b> — ᴄʜ {chapter.number}\n"
                         f"ᴘᴀɢᴇꜱ: {done_n}/{total}</blockquote>")))
-        from manga_sources import get_provider as _gp  # noqa: F401
         from manga_sources.base import fetch_images
         workdir = TMP / f"{user_id}_{int(time.time())}"
         paths = await loop.run_in_executor(
