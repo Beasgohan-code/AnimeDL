@@ -199,11 +199,16 @@ def download_provider_episode(url: str, download_path: Path, progress_queue,
             # cache-hit when the quality menu prefetched this episode already
             resolved = _cs(f"res:{provider_id}:{url}", provider.resolve, url)
             break
-        except (_SE, requests.RequestException) as e:
+        except Exception as e:
+            # PROD FIX (v4.19.0): this used to catch only (_SE, RequestException),
+            # so any resolver bug — e.g. AllAnime returning a JSON string and the
+            # code calling .get on it — escaped as the cryptic
+            # "Download error on attempt N: 'str' object has no attribute 'get'"
+            # instead of falling through to retry + cross-source recovery.
             if _attempt:
                 break  # fall into cross-source recovery, then the guard raises
             logging.getLogger(__name__).info(
-                "resolve failed for %s (%s) — retrying once", url, e
+                "resolve failed for %s (%s: %s) — retrying once", url, type(e).__name__, e
             )
             import time as _t
             _t.sleep(1.5)
@@ -219,6 +224,41 @@ def download_provider_episode(url: str, download_path: Path, progress_queue,
             provider, provider_id, resolved = recovered[0], recovered[0].id, recovered[1]
     if resolved is None or not getattr(resolved, "streams", []):
         raise _SE(f"resolve failed for {url} — no stream on any source")
+
+    # ── STREAM SHAPE NORMALIZATION (PROD FIX v4.19.0) ──
+    # Resolvers return dicts, Stream dataclasses (zangetsu/kaiwave/tokyoinsider),
+    # or — from a bad response — bare url strings. The downloader speaks ONE
+    # shape (dicts); without this, pick() crashed with
+    # "'str' object has no attribute 'get'" / "'Stream' object has no …".
+    _norm_streams = []
+    for s in (getattr(resolved, "streams", None) or []):
+        if isinstance(s, str):
+            if s.startswith("http"):
+                _norm_streams.append({"quality": "auto", "url": s})
+        elif isinstance(s, dict):
+            if s.get("url"):
+                _norm_streams.append(s)
+        else:
+            u = getattr(s, "url", "")
+            if u:
+                _norm_streams.append({
+                    "quality": getattr(s, "quality", "auto") or "auto",
+                    "url": u,
+                    "audio": getattr(s, "audio", "sub") or "sub",
+                    "headers": getattr(s, "headers", {}) or {},
+                })
+            # lift per-stream subtitles (kaiwave/zangetsu carry them on Stream)
+            st_subs = getattr(s, "subtitles", None)
+            if st_subs and not getattr(resolved, "subtitles", None):
+                resolved.subtitles = [st_subs] if isinstance(st_subs, str) else list(st_subs)
+    resolved.streams = _norm_streams
+    if _norm_streams and not (getattr(resolved, "subtitles", None) or []):
+        for n in _norm_streams:
+            st_subs = n.get("subtitles")
+            if st_subs:
+                resolved.subtitles = [st_subs] if isinstance(st_subs, str) else list(st_subs)
+                break
+
     title = name_override or resolved.title or title_fallback or "Anime"
     ep_num = str(ep_num_override or resolved.ep_num or ep_num_fallback or "1")
     season = str(season_override or resolved.season or "1")
@@ -272,6 +312,18 @@ def download_provider_episode(url: str, download_path: Path, progress_queue,
             os.replace(final_path, final_file)
         except Exception:
             final_file = Path(final_path)
+
+        # Subtitle embedding (hianime/aniwave/zangetsu resolvers ship .vtt
+        # tracks — mux them in, stream-copy) — before chapters so the
+        # chapter remux carries the sub streams too. Strictly fail-open.
+        _subs = list(getattr(resolved, "subtitles", []) or [])
+        if _subs:
+            try:
+                from anime_sources.subtitles import embed_subtitles
+                if embed_subtitles(str(final_file), _subs):
+                    progress_queue.put({"status": "ℹ️ ꜱᴜʙᴛɪᴛʟᴇꜱ ᴇᴍʙᴇᴅᴅᴇᴅ (ᴇɴɢ)"})
+            except Exception:
+                pass
 
         # AniSkip chapters (OP/ED markers for players) — strictly fail-open
         try:

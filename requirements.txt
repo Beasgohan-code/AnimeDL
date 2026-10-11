@@ -35,6 +35,12 @@ google-auth-oauthlib>=1.4.0
 moviepy>=2.2.1
 Pillow>=9.2.0,<12.0
 
+# ── ffmpeg fallback (static binary when no system ffmpeg is installed) ──
+# Used by anime_sources.subtitles.find_ffmpeg(): PATH first, imageio second.
+# The Docker image installs the real ffmpeg via apt; this is the safety net
+# for bare-metal deploys.
+imageio-ffmpeg>=0.4.9
+
 natsort>=8.4.0
 pytz>=2024.1
 

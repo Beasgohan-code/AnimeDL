@@ -116,7 +116,15 @@ class AllAnimeSource(BaseProvider):
                 )
                 if resp.status_code != 200:
                     raise SourceError(f"AllAnime: HTTP {resp.status_code}")
-                return resp.json()
+                data = resp.json()
+                # PROD FIX: the API answers rate-limits / blocks with a bare
+                # JSON string ("Too many requests") — a .get on that raised
+                # 'str' object has no attribute 'get' and killed downloads.
+                # Convert to a SourceError so the engine's retry/recovery runs.
+                if not isinstance(data, dict):
+                    raise SourceError(
+                        f"AllAnime: unexpected API payload ({type(data).__name__})")
+                return data
             except requests.RequestException as e:
                 last_exc = e
                 import time as _t
@@ -141,7 +149,7 @@ class AllAnimeSource(BaseProvider):
             SEARCH_GQL,
         )
         results = []
-        for edge in (data.get("data", {}).get("shows", {}) or {}).get("edges", []) or []:
+        for edge in ((data.get("data") or {}).get("shows") or {}).get("edges") or []:
             eps = edge.get("availableEpisodes", {}) or {}
             count = eps.get("sub") or eps.get("dub") or 0
             results.append(SearchResult(

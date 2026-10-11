@@ -204,16 +204,20 @@ class AnimetsuScraper:
             ep_num = parts[-1]
 
         info = self.get_anime_info(anime_id)
-        if not info:
+        if not info or not isinstance(info, dict):
             if self.progress_queue: self.progress_queue.put({'error': 'Could not fetch anime info from Animetsu.'})
             return False
 
         title_dict = info.get('title', {})
-        anime_name = name_override or title_dict.get('english') or title_dict.get('romaji') or title_dict.get('native')
+        if not isinstance(title_dict, dict):
+            title_dict = {}
+        anime_name = name_override or title_dict.get('english') or title_dict.get('romaji') or title_dict.get('native') or anime_id
 
         # 1. Fetch Sub & Dub data
         sub_data = self.get_episode_sources(anime_id, ep_num, source_type='sub')
         dub_data = self.get_episode_sources(anime_id, ep_num, source_type='dub')
+        if not isinstance(sub_data, dict): sub_data = None
+        if not isinstance(dub_data, dict): dub_data = None
 
         is_dub_only = False
         if not sub_data or not sub_data.get('sources'):
@@ -227,12 +231,16 @@ class AnimetsuScraper:
             if self.progress_queue: self.progress_queue.put({'error': 'Could not find video sources on Animetsu.'})
             return False
 
-        # 2. Select Source and Quality
-        sources = sub_data['sources']
+        # 2. Select Source and Quality (dict-only — junk/string entries would
+        # crash src.get with "'str' object has no attribute 'get'")
+        sources = [s for s in (sub_data.get('sources') or []) if isinstance(s, dict)]
+        if not sources:
+            if self.progress_queue: self.progress_queue.put({'error': 'No usable video sources on Animetsu.'})
+            return False
         selected_source = sources[0]
         if quality != "auto":
             for src in sources:
-                if quality in src.get('quality', ''):
+                if quality in str(src.get('quality', '')):
                     selected_source = src
                     break
 
@@ -323,15 +331,17 @@ class AnimetsuScraper:
         # Download Dub (Audio Only) if available
         dub_downloaded = False
         if dub_data and dub_data.get('sources'):
-            dub_m3u8 = dub_data['sources'][0]['url']
-            if run_n_m3u8dl(dub_m3u8, f"{base_filename}_dub", 'dub'):
+            dub_srcs = [s for s in dub_data['sources'] if isinstance(s, dict) and s.get('url')]
+            if dub_srcs and run_n_m3u8dl(dub_srcs[0]['url'], f"{base_filename}_dub", 'dub'):
                 dub_downloaded = True
 
         # 5. Extract Subs
         sub_files = []
         if sub_data.get('subs'):
             for i, s in enumerate(sub_data['subs']):
-                lang = s.get('lang', f'sub_{i}').lower().replace(' ', '_')
+                if not isinstance(s, dict) or not s.get('url'):
+                    continue
+                lang = str(s.get('lang', f'sub_{i}')).lower().replace(' ', '_')
                 sub_path = task_dir / f"{base_filename}_{lang}.vtt"
                 try:
                     r = self.session.get(s['url'], timeout=10)

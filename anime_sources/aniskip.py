@@ -98,7 +98,7 @@ def skip_times(mal_id: int, episode: int):
     return results
 
 
-def _mux_chapters(video_path: str, results: list) -> bool:
+def _mux_chapters(video_path: str, results: list, ffmpeg_bin: str = "ffmpeg") -> bool:
     """Write FFMETADATA chapters and remux (-c copy) into video_path."""
     with tempfile.NamedTemporaryFile("w", suffix=".ffmeta", delete=False) as fh:
         fh.write(";FFMETADATA1\n")
@@ -109,9 +109,13 @@ def _mux_chapters(video_path: str, results: list) -> bool:
         meta = fh.name
     tmp_out = video_path + ".chapters.mkv"
     try:
+        # -c copy alone breaks when the input is an .mp4 carrying mov_text
+        # subtitles (matroska can't copy them) — convert text subs to srt on
+        # the way in. Inputs without subs are unaffected.
         proc = subprocess.run(
-            ["ffmpeg", "-y", "-i", video_path, "-i", meta,
-             "-map", "0", "-map_metadata", "1", "-c", "copy", tmp_out],
+            [ffmpeg_bin, "-y", "-i", video_path, "-i", meta,
+             "-map", "0", "-map_metadata", "1", "-c", "copy", "-c:s", "srt",
+             tmp_out],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=180)
         if proc.returncode == 0 and os.path.getsize(tmp_out) > 0:
             os.replace(tmp_out, video_path)
@@ -144,7 +148,14 @@ def maybe_add_chapters(video_path: str, title: str, ep_num) -> bool:
     if not video_path.lower().endswith((".mkv", ".mp4", ".m4v", ".ts")):
         return False
     try:
-        if shutil_which("ffmpeg") is None:
+        # locate ffmpeg the same way the rest of the pipeline does (PATH →
+        # imageio static) — a bare shutil.which misses hosts without apt ffmpeg
+        try:
+            from anime_sources.subtitles import find_ffmpeg
+            ffmpeg_bin = find_ffmpeg()
+        except Exception:  # noqa: BLE001
+            ffmpeg_bin = None
+        if not ffmpeg_bin:
             return False
         mal = mal_id_for_title(title)
         if not mal:
@@ -152,7 +163,7 @@ def maybe_add_chapters(video_path: str, title: str, ep_num) -> bool:
         results = skip_times(mal, ep_num)
         if not results:
             return False
-        ok = _mux_chapters(video_path, results)
+        ok = _mux_chapters(video_path, results, ffmpeg_bin)
         if ok:
             logger.info("aniskip: %s chapters added for %s EP%s",
                         len(results), title, ep_num)

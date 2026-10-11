@@ -194,6 +194,9 @@ def _keyless_extract(embed_url: str) -> Optional[dict]:
             last_err = RuntimeError(f"getSources HTTP {r.status_code}")
             continue
         data = r.json()
+        if not isinstance(data, dict):
+            last_err = RuntimeError(f"getSources payload was {type(data).__name__}")
+            continue
         if isinstance(data.get("sources"), str):
             chars = list(data["sources"])
             cur = _hash_str(client_key)
@@ -266,8 +269,14 @@ def megaplay_fallback(ep_id: str, mode: str = "sub") -> Optional[dict]:
                 headers={**_HEADERS, "X-Requested-With": "XMLHttpRequest",
                          "Referer": f"https://{domain}.{'buzz' if domain == 'megaplay' else 'live'}/"},
             )
-            if data and data.get("sources", {}).get("file"):
-                return {"file": data["sources"]["file"], "tracks": data.get("tracks", [])}
+            if isinstance(data, dict):
+                src = data.get("sources")
+                # sources can be the raw dict, the encrypted string (not
+                # decodable on this route — skip), or junk; only a dict with
+                # a file is usable here
+                if isinstance(src, dict) and src.get("file"):
+                    return {"file": src["file"],
+                            "tracks": data.get("tracks") or []}
         except Exception as e:
             logger.debug("megaplay fallback failed on %s: %s", domain, e)
     return None
