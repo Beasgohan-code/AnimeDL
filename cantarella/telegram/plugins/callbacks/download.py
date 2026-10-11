@@ -130,10 +130,10 @@ async def on_start_batch_dl(client: Client, callback_query):
             ep_msgs = [m for ms in results_list for m in ms]
             if ep_msgs:
                 all_chunk_msgs.extend(ep_msgs)
-                for msg in ep_msgs:
-                    if first_msg_id is None:
-                        first_msg_id = msg.id
-                    last_msg_id = msg.id
+                # uploads complete out of order under parallelism — sort ids
+                # so the channel-index range is always ascending & correct
+                _ids = sorted(m.id for m in ep_msgs)
+                first_msg_id, last_msg_id = _ids[0], _ids[-1]
 
             if first_msg_id and last_msg_id:
                 q_label = f"{quality}p" if quality.isdigit() else "ᴀᴜᴛᴏ"

@@ -410,9 +410,8 @@ async def on_start_range_dl(client: Client, callback_query):
             ep_msgs = [m for ms in results_list for m in ms]
             if ep_msgs:
                 all_chunk_msgs.extend(ep_msgs)
-                for m in ep_msgs:
-                    if first_id is None: first_id = m.id
-                    last_id = m.id
+                _ids = sorted(m.id for m in ep_msgs)   # out-of-order uploads
+                first_id, last_id = _ids[0], _ids[-1]
 
             if first_id and last_id:
                 q_label = f"{q}p" if q.isdigit() else "ᴀᴜᴛᴏ"

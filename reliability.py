@@ -399,8 +399,21 @@ class Watchdog:
             return
         now = datetime.now()
         today = now.strftime("%Y-%m-%d")
-        if (now.hour, now.minute) == scheduled and self._auto_restart_day != today:
+        # Fire once per day, at the first check AFTER the scheduled time.
+        # The old minute-equality silently missed the window whenever no
+        # check landed exactly in that minute. A naive >= check would
+        # boot-loop after every restart on/after the scheduled time, so the
+        # last fire date is persisted in the DB (survives restarts).
+        from cantarella.core.database import db as _db
+        last_day = await _db.get_user_setting(0, "auto_restart_last_date", None)
+        if last_day == today:
+            return
+        if (now.hour, now.minute) >= scheduled:
             self._auto_restart_day = today
+            try:
+                await _db.set_user_setting(0, "auto_restart_last_date", today)
+            except Exception:
+                pass
             await self.restart(f"daily hygiene restart ({scheduled[0]:02d}:{scheduled[1]:02d})")
 
     # ----------------------------------------------------------------- cycle

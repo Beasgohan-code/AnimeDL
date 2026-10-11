@@ -38,7 +38,7 @@ class ConsumetSource(BaseProvider):
 
     def _get(self, path: str, params: dict = None) -> dict:
         resp = http_session().get(f"{self.base}{path}", params=params,
-                            headers={"User-Agent": DEFAULT_UA}, timeout=15)
+                            headers={"User-Agent": DEFAULT_UA}, timeout=(6, 15))
         if resp.status_code != 200:
             raise SourceError(f"Consumet: HTTP {resp.status_code}")
         return resp.json()
@@ -104,7 +104,7 @@ class AniwatchApiSource(BaseProvider):
 
     def _get(self, path: str, params: dict = None) -> dict:
         resp = http_session().get(f"{self.base}{path}", params=params,
-                            headers={"User-Agent": DEFAULT_UA}, timeout=15)
+                            headers={"User-Agent": DEFAULT_UA}, timeout=(6, 15))
         if resp.status_code != 200:
             raise SourceError(f"Aniwatch API: HTTP {resp.status_code}")
         payload = resp.json()

@@ -51,7 +51,7 @@ def _bootstrap(force: bool = False):
         headers={"User-Agent": DEFAULT_UA,
                  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                  "Referer": f"{BASE}/home"},
-        timeout=15,
+        timeout=(6, 15),
     )
     if resp.status_code != 200:
         raise SourceError(f"Zangetsu: bootstrap HTTP {resp.status_code}")
@@ -86,7 +86,7 @@ class ZangetsuSource(BaseProvider):
                 "X-Page-Token": sess["token"],
                 **({"Cookie": sess["cookie"]} if sess["cookie"] else {}),
             },
-            timeout=15,
+            timeout=(6, 15),
         )
         if resp.status_code == 403 or resp.status_code == 401:
             # token/cookie expired → re-bootstrap once
@@ -101,7 +101,7 @@ class ZangetsuSource(BaseProvider):
                     "X-Page-Token": sess["token"],
                     **({"Cookie": sess["cookie"]} if sess["cookie"] else {}),
                 },
-                timeout=15,
+                timeout=(6, 15),
             )
         if resp.status_code != 200:
             raise SourceError(f"Zangetsu: HTTP {resp.status_code}")
@@ -112,7 +112,7 @@ class ZangetsuSource(BaseProvider):
         page = http_session().get(
             f"{BASE}/search?keyword={quote_plus(query)}",
             headers={"User-Agent": DEFAULT_UA, "Referer": f"{BASE}/home"},
-            timeout=15,
+            timeout=(6, 15),
         )
         if page.status_code != 200:
             raise SourceError(f"Zangetsu: HTTP {page.status_code}")

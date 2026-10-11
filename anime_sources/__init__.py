@@ -100,11 +100,6 @@ def download_provider_episode(url: str, download_path: Path, progress_queue,
     ep_num = str(ep_num_override or resolved.ep_num or ep_num_fallback or "1")
     season = str(season_override or resolved.season or "1")
 
-    try:
-        from config import FORMAT
-    except ImportError:
-        FORMAT = "[S{season}-E{episode}] {title} [{quality}] [{audio}]"
-
     def sanitize(name: str) -> str:
         return re.sub(r'[\\/*?:"<>|]', "", name)
 

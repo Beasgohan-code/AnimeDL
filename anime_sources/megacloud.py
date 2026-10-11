@@ -51,7 +51,7 @@ _key_at = 0.0
 _KEY_TTL = 3600
 
 
-def _get(url: str, headers: dict = None, timeout: int = 15) -> Optional[requests.Response]:
+def _get(url: str, headers: dict = None, timeout=(6, 15)) -> Optional[requests.Response]:
     try:
         resp = http_session().get(url, headers=headers or _HEADERS, timeout=timeout)
         if resp.status_code != 200:
