@@ -79,7 +79,7 @@ _RESULT_CACHE = {}         # (query, source) -> (ts, results, winner_key)
 _RESULT_CACHE_TTL = 90.0
 
 
-def search_anime_multi(query, source="animetsu", max_sources=5,
+def search_anime_multi(query, source="hianime", max_sources=5,
                        head_start=4.0, deadline=12.0):
     """Memoized wrapper: identical searches within 90s answer instantly."""
     import time as _t
@@ -96,7 +96,7 @@ def search_anime_multi(query, source="animetsu", max_sources=5,
     return results, tried
 
 
-def _search_anime_multi_impl(query, source="animetsu", max_sources=5,
+def _search_anime_multi_impl(query, source="hianime", max_sources=5,
                              head_start=4.0, deadline=12.0):
     """Search the active source first, then fall back through the engine —
     but RACE the sources in parallel instead of walking them one by one.

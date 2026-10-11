@@ -34,7 +34,7 @@ async def handle_url(client: Client, message):
             caption="<blockquote>🔍 <b>ꜱᴇᴀʀᴄʜɪɴɢ ᴀɴɪᴍᴇ, ᴘʟᴇᴀꜱᴇ ᴡᴀɪᴛ...</b></blockquote>",
             parse_mode=ParseMode.HTML
         )
-        active_source = await db.get_user_setting(0, "active_source", "animetsu")
+        active_source = await db.get_user_setting(0, "active_source", "hianime")
         from cantarella.scraper.search import search_anime_multi
         from anime_sources.base import SOURCE_NAMES
         results, tried = await asyncio.to_thread(search_anime_multi, url, active_source)
@@ -99,7 +99,7 @@ async def handle_url(client: Client, message):
 
             await post_to_main_channel(client, url, uploaded_msgs, quality_map)
     else:
-        active_source = await db.get_user_setting(0, "active_source", "animetsu")
+        active_source = await db.get_user_setting(0, "active_source", "hianime")
         if is_animetsu:
             from cantarella.scraper.animetsu import AnimetsuScraper
             entries = await asyncio.to_thread(AnimetsuScraper().list_episodes, url)

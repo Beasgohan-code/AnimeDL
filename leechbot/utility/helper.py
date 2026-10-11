@@ -646,7 +646,7 @@ async def send_settings(client, message, msg_id: int, is_command: bool):
             "ongoing": await _adb.get_user_setting(0, "ongoing_enabled", False),
             "mapping": await _adb.get_user_setting(0, "mapping_batch_mode", True),
             "source": _SN.get(
-                await _adb.get_user_setting(0, "active_source", "animetsu"),
+                await _adb.get_user_setting(0, "active_source", "hianime"),
                 "animetsu",
             ),
         }

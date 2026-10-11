@@ -149,7 +149,7 @@ def fetch_animetsu_recently_updated():
     return filtered_results
 
 async def check_and_download_ongoing(client: Client, chat_id: int):
-    active_source = await db.get_user_setting(0, "active_source", "animetsu")
+    active_source = await db.get_user_setting(0, "active_source", "hianime")
     print(f"Checking for recently updated anime (Source: {active_source})...")
 
     # -- Cross-source fallback: these upstream sites rot / block IPs often,
@@ -552,7 +552,7 @@ async def ongoing_task(client: Client):
             # just hammer dead/TLS-blocked domains every cycle — skip them
             # and let the mapped-anime watcher do the work.
             try:
-                src = await db.get_user_setting(0, "active_source", "animetsu")
+                src = await db.get_user_setting(0, "active_source", "hianime")
             except Exception:
                 src = "animetsu"
             if src in ("animetsu", "aniwatch"):

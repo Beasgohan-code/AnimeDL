@@ -106,7 +106,7 @@ async def handle_ongoing_schedule(client: Client, message):
         caption="<blockquote>📆 <b>ғᴇᴛᴄʜɪɴɢ ᴛᴏᴅᴀʏ'ꜱ ᴀɴɪᴍᴇ ʀᴇʟᴇᴀꜱᴇ ꜱᴄʜᴇᴅᴜʟᴇ...</b></blockquote>",
         parse_mode=ParseMode.HTML
     )
-    active_source = await db.get_user_setting(0, "active_source", "animetsu")
+    active_source = await db.get_user_setting(0, "active_source", "hianime")
     schedule = await asyncio.to_thread(fetch_schedule_list, source=active_source)
 
     if not schedule:

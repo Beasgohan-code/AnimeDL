@@ -47,7 +47,7 @@ async def on_anime_select(client: Client, callback_query):
         }
         return await show_episodes_page(client, callback_query, 0)
 
-    active_source = await db.get_user_setting(0, "active_source", "animetsu")
+    active_source = await db.get_user_setting(0, "active_source", "hianime")
     if active_source == "animetsu":
         url = f"https://animetsu.live/anime/{anime_id}"
         from cantarella.scraper.animetsu import AnimetsuScraper
@@ -666,7 +666,7 @@ async def on_ani_search(client: Client, callback_query):
     from cantarella.scraper.search import search_anime_multi
     from anime_sources.base import SOURCE_NAMES
     from cantarella.core.database import db as _db
-    active_source = await _db.get_user_setting(0, "active_source", "animetsu")
+    active_source = await _db.get_user_setting(0, "active_source", "hianime")
     results, tried = await client.loop.run_in_executor(None, search_anime_multi, name, active_source)
 
     if not results:

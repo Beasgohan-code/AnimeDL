@@ -293,7 +293,11 @@ def provider_id_for_url(url: str) -> str:
         return "aniwatchapi"
     if u.startswith("zangetsu://") or "zangetsu" in u:
         return "zangetsu"
-    if "hianime" in u:
+    # aniwatchtv.to runs the SAME platform as hianime (same /api/theme
+    # paths) and is in our mirror fleet — legacy-flow URLs must resolve here,
+    # not die with "No provider handles URL" (this exact gap made EVERY
+    # default-source download fail after the v4.14.0 routing change)
+    if "aniwatchtv" in u or "hianime" in u:
         return "hianime"
     if "gogoanime" in u:
         return "gogo"

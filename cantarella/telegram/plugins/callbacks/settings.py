@@ -80,7 +80,7 @@ async def on_toggle_active_source(client: Client, callback_query):
 
     from anime_sources.base import SOURCE_CYCLE, SOURCE_NAMES
 
-    current = await db.get_user_setting(0, "active_source", "animetsu")
+    current = await db.get_user_setting(0, "active_source", "hianime")
     try:
         idx = SOURCE_CYCLE.index(current)
     except ValueError:
