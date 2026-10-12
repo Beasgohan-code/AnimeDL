@@ -20,6 +20,17 @@ async def set_bot_commands(client: Client):
         BotCommand("unmap", "❌ Rᴇᴍᴏᴠᴇ ᴀɴɪᴍᴇ ᴍᴀᴘᴘɪɴɢ (Aᴅᴍɪɴ)"),
         BotCommand("admins", "🛡️ Vɪᴇᴡ ʙᴏᴛ ᴀᴅᴍɪɴɪsᴛʀᴀᴛᴏʀs (Aᴅᴍɪɴ)"),
         BotCommand("users", "👥 Vɪᴇᴡ ᴛᴏᴛᴀʟ ᴜsᴇʀs (Aᴅᴍɪɴ)"),
+        # ── Manga engine ──
+        BotCommand("manga", "📖 ꜰᴇᴀʀᴄɦ ᴍᴀɴɢᴀ/ᴍᴀɴɦᴡᴀ – 15 ꜰᴏᴜʀᴄᴇꜰ"),
+        BotCommand("mrandom", "🎲 ʀᴀɴᴅᴏᴍ ꜰᴇʀɪᴇꜰ → ᴄɪᴀᴘᴛᴇʀꜰ"),
+        BotCommand("usettings", "⚙️ ᴜꜰᴇʀ ꜰᴇᴛᴛɪɴɢꜰ – ꜰᴏʀᴍᴀᴛ + 18+"),
+        BotCommand("premium", "💎 ᴘʀᴇᴍɪᴜᴍ ꜰᴛᴀᴛᴜꜰ"),
+        BotCommand("msearch", "🔎 ꜰᴇᴀʀᴄɦ ᴏɴ ᴏɴᴇ ꜰᴏᴜʀᴄᴇ"),
+        BotCommand("minfo", "ℹ️ ᴍᴀɴɢᴀ ᴅᴇᴛᴀɪꜰꜰ ᴄᴀʀᴅ"),
+        BotCommand("mqueue", "🧾 ʀᴜɴɴɪɴɢ ᴍᴀɴɢᴀ ꜁ᴏʙꜰ"),
+        BotCommand("mclean", "🧹 ᴄꜰᴇᴀʀ ᴍᴀɴɢᴀ ꜰᴇꜰꜰɪᴏɴ"),
+        BotCommand("mrefresh", "🔄 ʀᴇ-ɡᴇᴛ ꜰᴀꜰᴛ ᴄɪᴀᴘᴛᴇʀ"),
+        BotCommand("mpost", "🖼 ꜰɪᴀʀᴀ⦀ꜰᴇ ᴄᴏᴛᴇʀ ᴘᴏꜰᴛ"),
         # ── Leech engine ──
         BotCommand("tupload", "📥 Lᴇᴇᴄʜ ᴀ ʟɪɴᴋ ᴛᴏ Tᴇʟᴇɢʀᴀᴍ"),
         BotCommand("gdupload", "♻️ Mɪʀʀᴏʀ ᴛᴏ Gᴏᴏɢʟᴇ Dʀɪᴠᴇ"),

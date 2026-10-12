@@ -20,6 +20,34 @@ API = "https://api.mangadex.org"
 class MangaDexProvider:
     id = "mangadex"
 
+    def _parse(self, item: dict) -> MangaSearchResult:
+        attrs = item.get("attributes") or {}
+        title = (
+            (attrs.get("title") or {}).get("en")
+            or ((attrs.get("altTitles") or [{}])[0].values() and
+                list((attrs.get("altTitles") or [{}])[0].values())[0])
+            or "Unknown"
+        )
+        cover = ""
+        for rel in item.get("relationships") or []:
+            if rel.get("type") == "cover_art":
+                fname = (rel.get("attributes") or {}).get("fileName")
+                if fname:
+                    cover = (f"https://uploads.mangadex.org/covers/"
+                             f"{item['id']}/{fname}.256.jpg")
+                break
+        tags = [t["attributes"]["name"]["en"]
+                for t in (attrs.get("tags") or [])[:3] if t.get("attributes")]
+        return MangaSearchResult(
+            provider=self.id,
+            id=item["id"],
+            title=title,
+            cover=cover,
+            url=f"https://mangadex.org/title/{item['id']}",
+            extra=" · ".join(tags) or
+                  (attrs.get("status") or "").replace("_", " "),
+        )
+
     def search(self, query: str) -> list:
         data = http_json(
             f"{API}/manga",
@@ -32,35 +60,49 @@ class MangaDexProvider:
                 "order[relevance]": "desc",
             },
         )
-        out = []
-        for item in data.get("data") or []:
-            attrs = item.get("attributes") or {}
-            title = (
-                (attrs.get("title") or {}).get("en")
-                or ((attrs.get("altTitles") or [{}])[0].values() and
-                    list((attrs.get("altTitles") or [{}])[0].values())[0])
-                or "Unknown"
-            )
-            cover = ""
-            for rel in item.get("relationships") or []:
-                if rel.get("type") == "cover_art":
-                    fname = (rel.get("attributes") or {}).get("fileName")
-                    if fname:
-                        cover = (f"https://uploads.mangadex.org/covers/"
-                                 f"{item['id']}/{fname}.256.jpg")
-                    break
-            tags = [t["attributes"]["name"]["en"]
-                    for t in (attrs.get("tags") or [])[:3] if t.get("attributes")]
-            out.append(MangaSearchResult(
-                provider=self.id,
-                id=item["id"],
-                title=title,
-                cover=cover,
-                url=f"https://mangadex.org/title/{item['id']}",
-                extra=" · ".join(tags) or
-                      (attrs.get("status") or "").replace("_", " "),
-            ))
-        return out
+        return [self._parse(item) for item in data.get("data") or []]
+
+    def random_sfw(self) -> MangaSearchResult:
+        """One random SFW series — powers /mrandom (dice feature)."""
+        data = http_json(
+            f"{API}/random-manga",
+            params={
+                "includes[]": "cover_art",
+                "contentRating[]": ["safe", "suggestive"],
+            },
+        )
+        item = (data or {}).get("data") or {}
+        if not item.get("id"):
+            raise MangaError("MangaDex: random returned nothing")
+        return self._parse(item)
+
+    def info(self, query: str) -> dict:
+        """Details card for /minfo — title/status/year/tags/description."""
+        data = http_json(
+            f"{API}/manga",
+            params={
+                "title": query,
+                "limit": 1,
+                "includes[]": "cover_art",
+                "contentRating[]": ["safe", "suggestive"],
+            },
+        )
+        items = data.get("data") or []
+        if not items:
+            raise MangaError("MangaDex: no match for info lookup")
+        item = items[0]
+        res = self._parse(item)
+        attrs = item.get("attributes") or {}
+        desc = (attrs.get("description") or {}).get("en") or ""
+        return {
+            "result": res,
+            "status": (attrs.get("status") or "?").replace("_", " "),
+            "year": attrs.get("year") or "?",
+            "description": desc,
+            "tags": [t["attributes"]["name"]["en"]
+                     for t in (attrs.get("tags") or [])[:6]
+                     if t.get("attributes")],
+        }
 
     def chapters(self, manga_id: str, lang: str = "en") -> list:
         """Newest-first chapter feed (up to 500; enough for a tap flow)."""

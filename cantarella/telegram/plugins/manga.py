@@ -147,6 +147,73 @@ async def _render_results(msg, user_id: int, page: int = 0):
 # ─────────────────────────────────────────────
 #  /manga — search
 # ─────────────────────────────────────────────
+class _MsgView:
+    """Adapts a plain Message to the edit surface the renderers expect."""
+
+    def __init__(self, m):
+        self.message = m
+
+    async def edit_message_caption(self, caption=None, reply_markup=None, **k):
+        try:
+            return await self.message.edit_text(caption, reply_markup=reply_markup, **k)
+        except MessageNotModified:
+            raise
+        except Exception:
+            return None
+
+    async def edit_message_text(self, text=None, reply_markup=None, **k):
+        return await self.message.edit_text(text, reply_markup=reply_markup, **k)
+
+
+@Client.on_message(filters.private & filters.command("mrandom"))
+@check_ban
+async def mrandom_cmd(client: Client, message):
+    """One random SFW series, straight to its chapters."""
+    uid = message.from_user.id
+    if uid in _busy:
+        return await message.reply(
+            "<blockquote>⏳ ꜰɪɴɪꜱʜ ʏᴏᴜʀ ᴄᴜʀʀᴇɴᴛ ᴄʜᴀᴘᴛᴇʀ ꜰɪʀꜱᴛ.</blockquote>",
+            parse_mode=ParseMode.HTML)
+    status = await message.reply(
+        "<blockquote>🎲 ᴘɪᴄᴋɪɴɢ ᴀ ʀᴀɴᴅᴏᴍ ꜱᴇʀɪᴇꜱ ꜰᴏʀ ʏᴏᴜ…</blockquote>",
+        parse_mode=ParseMode.HTML)
+
+    def _pick():
+        from manga_sources import get_provider
+        return get_provider("mangadex").random_sfw()
+
+    try:
+        manga = await asyncio.get_event_loop().run_in_executor(None, _pick)
+    except Exception as e:
+        return await _safe_edit(status, "<blockquote>❌ ᴘɪᴄᴋ ꜰᴀɪʟᴇᴅ: "
+                                + str(e)[:140] + "</blockquote>")
+
+    key = "mangadex_0"
+    user_manga[uid] = {"query": "🎲 random", "results": [manga],
+                       "mangas": {key: manga}, "chapters": {},
+                       "pref_fmt": await _default_fmt(uid),
+                       "tried": [("mangadex", 1)]}
+    await _safe_edit(status, "<blockquote>🎲 <b>" + manga.title[:40]
+                     + "</b> — ʟᴏᴀᴅɪɴɢ ᴄʜᴀᴘᴛᴇʀꜱ…</blockquote>")
+
+    def _ch():
+        from manga_sources import get_provider
+        return get_provider("mangadex").chapters(manga.id)
+
+    try:
+        chapters = await asyncio.get_event_loop().run_in_executor(None, _ch)
+    except Exception as e:
+        user_manga.pop(uid, None)
+        return await _safe_edit(status, "<blockquote>❌ ᴄʜᴀᴘᴛᴇʀꜱ ꜰᴀɪʟᴇᴅ: "
+                                + str(e)[:140] + "</blockquote>")
+    if not chapters:
+        user_manga.pop(uid, None)
+        return await _safe_edit(status,
+            "<blockquote>❌ ɴᴏ ᴇɴɢʟɪꜱʜ ᴄʜᴀᴘᴛᴇʀꜱ — ʀᴏʟʟ ᴀɢᴀɪɴ: /mrandom</blockquote>")
+    user_manga[uid]["chapters"][key] = chapters
+    await _render_chapters(_MsgView(status), uid, key, 0)
+
+
 @Client.on_message(filters.private & filters.command("manga"))
 @check_ban
 async def manga_search_cmd(client: Client, message):
@@ -157,7 +224,7 @@ async def manga_search_cmd(client: Client, message):
             "<blockquote>📖 <b>ᴍᴀɴɢᴀ ꜱᴇᴀʀᴄʜ</b>\n\n"
             "ᴜꜱᴀɢᴇ: <code>/manga solo leveling</code>\n\n"
             "ꜱᴏᴜʀᴄᴇꜱ: ᴍᴀɴɢᴀᴅᴇx · ᴄᴏᴍɪᴄᴋ · ᴀꜱᴜʀᴀ · ᴡᴇᴇʙᴄᴇɴᴛʀᴀʟ · ᴍɢᴇᴋᴏ + 7 ᴍᴏʀᴇ\n"
-            "ᴏᴜᴛᴘᴜᴛ: 📄 ᴘᴅꜰ ᴏʀ 📚 ᴄʙᴢ ᴘᴇʀ ᴄʜᴀᴘᴛᴇʀ</blockquote>",
+            "🎲 /mrandom — ꜱᴜʀᴘʀɪꜱᴇ ꜱᴇʀɪᴇꜱ · ᴏᴜᴛᴘᴜᴛ: 📄 ᴘᴅꜰ / 📚 ᴄʙᴢ</blockquote>",
             parse_mode=ParseMode.HTML)
 
     include_nsfw = await _nsfw_allowed(uid)
@@ -354,7 +421,7 @@ async def on_manga_newsearch(client: Client, cq):
         await client.send_message(
             cq.from_user.id,
             "<blockquote>🔎 ꜱᴇɴᴅ: <code>/manga &lt;ᴛɪᴛʟᴇ&gt;</code>\n"
-            "ᴇxᴀᴍᴘʟᴇ: <code>/manga one piece</code></blockquote>",
+            "ᴇxᴀᴍᴘʟᴇ: <code>/manga one piece</code> · <code>/mrandom</code> 🎲</blockquote>",
             parse_mode=ParseMode.HTML)
     except Exception:
         pass
@@ -461,6 +528,9 @@ async def on_manga_download(client: Client, cq):
             cq.message.chat.id, document=str(out_path),
             file_name=Path(out_path).name,
             caption=caption, parse_mode=ParseMode.HTML)
+        state["last_dl"] = {"provider": key.split("_", 1)[0],
+                            "title": manga.title,
+                            "chapter": chapter, "fmt": fmt}
         await status.edit_text(
             f"<blockquote>✅ ᴄʜ {chapter.number} ᴅᴇʟɪᴠᴇʀᴇᴅ ⚡ {round(time.time()-t0)}s</blockquote>",
             parse_mode=ParseMode.HTML)

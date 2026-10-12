@@ -322,7 +322,7 @@ ok("no third-party branding",
    not any(b in plug.lower() for b in ("codeflix", "abhinai", "dra-sama")))
 ok("help mentions /manga", "/manga" in Path(ROOT, "Script.py").read_text())
 from config import VERSION
-ok("VERSION == 4.22.0", VERSION == "4.24.1", VERSION)
+ok("VERSION == 4.22.0", VERSION == "4.25.0", VERSION)
 
 # ══ 11. LIVE probes (best-effort) ═══════════════════════════════════════════
 print("— live probes (best-effort)")
@@ -727,6 +727,85 @@ ok("on_us_fmt parses cq.data",
    "ᴄʙᴢ" in (_cq.message.captured.get("text") or ""), str(_cq.message.captured)[:120])
 _mp.user_manga.pop(5150, None); _mp.user_manga.pop(5151, None)
 _mp.user_manga.pop(5152, None)
+
+
+# ══ 16. v4.25.0 — MangaBot command suite (/msearch /minfo /mqueue …) ════════
+print("— MangaBot suite (manga-repo commands, no duplicates)")
+import manga_sources.mangadex as _mdxm
+
+# random_sfw + info parsing via faked module-level http_json
+_RAND_ITEM = {"id": "rand1", "attributes": {
+    "title": {"en": "Random Toon"}, "status": "ongoing",
+    "year": 2024, "tags": [{"attributes": {"name": {"en": "Comedy"}}}],
+    "description": {"en": "A very random toon about things. " * 40}},
+    "relationships": [{"type": "cover_art",
+                       "attributes": {"fileName": "r.jpg"}}]}
+def _fake_json(url, headers=None, params=None):
+    if "/random-manga" in url:
+        return {"data": _RAND_ITEM}
+    if url.endswith("/manga"):
+        assert params and params.get("title"), "info must pass title param"
+        return {"data": [_RAND_ITEM]}
+    raise AssertionError("unexpected url " + url)
+_real_mdx_json = _mdxm.http_json
+_mdxm.http_json = _fake_json
+try:
+    _mdx_p = _mdxm.MangaDexProvider()
+    rr = _mdx_p.random_sfw()
+    ok("random_sfw parses", rr.id == "rand1" and rr.title == "Random Toon"
+       and rr.cover.endswith("/covers/rand1/r.jpg.256.jpg"))
+    inf = _mdx_p.info("random toon")
+    ok("info card fields", inf["status"] == "ongoing" and inf["year"] == 2024
+       and inf["tags"] == ["Comedy"]
+       and len(inf["description"]) > 350 and inf["result"].id == "rand1")
+finally:
+    _mdxm.http_json = _real_mdx_json
+
+# mangabot registration + source lists consistent with the registry
+import cantarella.telegram.plugins.mangabot as _mb
+def _cmd_names15(obj, seen=None):
+    seen = seen or set()
+    if id(obj) in seen:
+        return set()
+    seen.add(id(obj))
+    out = set()
+    v = getattr(obj, "commands", None)
+    if v:
+        out.update(v)
+    for attr in ("filters", "parent", "base", "other"):
+        v = getattr(obj, attr, None)
+        if isinstance(v, (list, tuple)):
+            for s in v:
+                out |= _cmd_names15(s, seen)
+        elif v is not None and hasattr(v, "__dict__"):
+            out |= _cmd_names15(v, seen)
+    return out
+_mb_cmds = set()
+for h in _mb.__dict__.values():
+    if hasattr(h, "handlers"):
+        for h2, _ in h.handlers:
+            f = getattr(h2, "filters", None)
+            if f is not None:
+                _mb_cmds |= _cmd_names15(f)
+for c in ("msearch", "minfo", "mqueue", "mclean", "mrefresh", "mpost"):
+    ok(f"/{c} registered", c in _mb_cmds, str(sorted(_mb_cmds)))
+ok("no duplicate of /manga in mangabot", "manga" not in _mb_cmds)
+ok("mangabot sources == registry SFW",
+   set(_mb._SFW) == set(MS.SEARCH_ORDER))
+ok("mangabot NSFW list == NSFW_IDS", set(_mb._NSFW) == set(MS.NSFW_IDS))
+
+# last_dl wiring (mrefresh depends on it)
+ok("manga.py records last_dl",
+   'state["last_dl"]' in Path("cantarella/telegram/plugins/manga.py").read_text())
+
+# help + menu mention the suite
+_scr15 = Path("Script.py").read_text()
+ok("help mentions MangaBot suite",
+   "/msearch" in _scr15 and "/mrefresh" in _scr15 and "/mpost" in _scr15)
+_utils15 = Path("cantarella/telegram/utils.py").read_text()
+ok("menu registers MangaBot suite",
+   all(c in _utils15 for c in ("msearch", "minfo", "mqueue", "mclean",
+                               "mrefresh", "mpost")))
 
 n_fail = sum(1 for _, c in PASS if not c)
 print(f"\n═══ test_manga: {len(PASS) - n_fail}/{len(PASS)} passed ═══")
