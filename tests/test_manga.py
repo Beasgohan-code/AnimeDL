@@ -322,7 +322,7 @@ ok("no third-party branding",
    not any(b in plug.lower() for b in ("codeflix", "abhinai", "dra-sama")))
 ok("help mentions /manga", "/manga" in Path(ROOT, "Script.py").read_text())
 from config import VERSION
-ok("VERSION == 4.22.0", VERSION == "4.24.0", VERSION)
+ok("VERSION == 4.22.0", VERSION == "4.24.1", VERSION)
 
 # ══ 11. LIVE probes (best-effort) ═══════════════════════════════════════════
 print("— live probes (best-effort)")
@@ -626,6 +626,107 @@ MS.get_provider = real_gp
 ok("CF-blocked sources degrade to ⚠️, search survives",
    any(pid == "asura" and isinstance(o, str) for pid, o in tried5)
    and len(tried5) == len(MS.SEARCH_ORDER), str(tried5)[:120])
+
+
+# ══ 15. v4.24.1 — callbacks parse cq.data (no .pattern on CallbackQuery) ════
+print("— v4.24.1 callback parsing (render AttributeError fix)")
+for _plug in ("cantarella/telegram/plugins/manga.py",
+              "cantarella/telegram/plugins/usettings.py"):
+    _psrc = Path(_plug).read_text()
+    ok("no cq.pattern left in " + _plug.split("/")[-1],
+       "cq.pattern" not in _psrc)
+
+class _FakeMsg2:
+    def __init__(self):
+        self.captured = {}
+    async def edit_message_caption(self, caption=None, reply_markup=None, **k):
+        self.captured = {"text": caption, "markup": reply_markup}
+    async def edit_text(self, text=None, reply_markup=None, **k):
+        self.captured = {"text": text, "markup": reply_markup}
+
+class _FakeCQ:
+    """Mimics the real runtime: NO .pattern attribute at all."""
+    def __init__(self, data, uid):
+        self.data = data
+        self.from_user = type("U", (), {"id": uid})()
+        self.message = _FakeMsg2()
+        self.answered = []
+    async def answer(self, text=None, show_alert=False):
+        self.answered.append((text, show_alert))
+    async def edit_message_caption(self, caption=None, reply_markup=None, **k):
+        await self.message.edit_message_caption(caption=caption,
+                                                reply_markup=reply_markup, **k)
+    async def edit_message_text(self, text=None, reply_markup=None, **k):
+        await self.message.edit_text(text=text, reply_markup=reply_markup, **k)
+
+_loop3 = _aio.get_event_loop()
+
+# the exact crash from the report: mgp_ pick with no .pattern attribute
+_fake_prov_calls = []
+class _FakeProv:
+    def chapters(self, arg):
+        _fake_prov_calls.append(arg)
+        return [MangaChapter(id="c1", number="33", title="War")]
+_real_gp15 = MS.get_provider
+MS.get_provider = lambda pid: _FakeProv()
+_cq = _FakeCQ("mgp_mangadex_0", 5150)
+_mp.user_manga[5150] = {"query": "op", "results": [
+    MangaSearchResult(provider="mangadex", id="mid", title="One Piece Test")],
+    "mangas": {}, "chapters": {}, "tried": [("mangadex", 1)]}
+_loop3.run_until_complete(_mp.on_manga_pick(None, _cq))
+ok("on_manga_pick works without .pattern",
+   _fake_prov_calls == ["mid"]
+   and _mp.user_manga[5150]["chapters"]["mangadex_0"][0].number == "33",
+   str(_mp.user_manga[5150].get("chapters")))
+MS.get_provider = _real_gp15
+
+# respage
+_cq = _FakeCQ("mgsl_1", 5150)
+_mp.user_manga[5150]["results"] = [
+    MangaSearchResult(provider="mangadex", id=f"m{i}", title=f"T{i}")
+    for i in range(10)]
+_loop3.run_until_complete(_mp.on_manga_respage(None, _cq))
+ok("on_manga_respage parses cq.data",
+   _mp.user_manga[5150].get("res_page") == 1
+   and "2/2" in (_cq.message.captured.get("text") or ""))
+
+# chpage
+_cq = _FakeCQ("mgc_mangadex_0_0", 5151)
+_mp.user_manga[5151] = {
+    "mangas": {"mangadex_0": MangaSearchResult(provider="mangadex",
+                                               id="m", title="T")},
+    "chapters": {"mangadex_0": [MangaChapter(id="c1", number="1")]},
+    "results": [], "query": "x", "tried": []}
+_loop3.run_until_complete(_mp.on_manga_chpage(None, _cq))
+ok("on_manga_chpage parses cq.data",
+   "ᴄʜᴀᴘᴛᴇʀꜱ: 1" in (_cq.message.captured.get("text") or ""),
+   str(_cq.message.captured)[:120])
+
+# download guard: parse succeeds → proceeds to stale-check (state empty on purpose)
+_cq = _FakeCQ("mgd_mangadex_0_0_3_pdf", 5152)
+_mp.user_manga[5152] = {"mangas": {}, "chapters": {}, "results": [],
+                        "query": "x", "tried": []}
+_loop3.run_until_complete(_mp.on_manga_download(None, _cq))
+ok("on_manga_download parses 4-group cq.data",
+   any("ꜱᴛᴀʟᴇ ʟɪɴᴋ" in (a[0] or "") for a in _cq.answered), str(_cq.answered))
+
+# usettings format toggle
+import cantarella.telegram.plugins.usettings as _us
+import cantarella.core.database as _cdb15
+class _FakeDB15:
+    async def set_user_setting(self, uid, key, value): return True
+    async def get_user_setting(self, uid, key, default=None):
+        return {"manga_format": "cbz", "show_nsfw": False}.get(key, default)
+    async def is_premium(self, uid): return False
+_real_db15 = _cdb15.db
+_cdb15.db = _FakeDB15()
+_cq = _FakeCQ("us_fmt_cbz", 5153)
+_loop3.run_until_complete(_us.on_us_fmt(None, _cq))
+_cdb15.db = _real_db15
+ok("on_us_fmt parses cq.data",
+   "ᴄʙᴢ" in (_cq.message.captured.get("text") or ""), str(_cq.message.captured)[:120])
+_mp.user_manga.pop(5150, None); _mp.user_manga.pop(5151, None)
+_mp.user_manga.pop(5152, None)
 
 n_fail = sum(1 for _, c in PASS if not c)
 print(f"\n═══ test_manga: {len(PASS) - n_fail}/{len(PASS)} passed ═══")

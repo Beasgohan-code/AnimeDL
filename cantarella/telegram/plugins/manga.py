@@ -12,6 +12,7 @@
 
 import asyncio
 import logging
+import re
 import time
 from pathlib import Path
 
@@ -203,7 +204,10 @@ async def on_manga_pick(client: Client, cq):
     state = user_manga.get(user_id)
     if not state:
         return await cq.answer("❌ ꜱᴇꜱꜱɪᴏɴ ᴇxᴘɪʀᴇᴅ — /manga ᴀɢᴀɪɴ.", show_alert=True)
-    pid, idx = cq.pattern.group(1), int(cq.pattern.group(2))
+    _m = re.match(r"^mgp_([a-z]+)_(\d+)$", cq.data or "")
+    if not _m:
+        return await cq.answer()
+    pid, idx = _m.group(1), int(_m.group(2))
     results = state.get("results") or []
     if idx >= len(results):
         return await cq.answer("❌ ꜱᴛᴀʟᴇ ʟɪɴᴋ.", show_alert=True)
@@ -228,7 +232,7 @@ async def on_manga_pick(client: Client, cq):
         return prov.chapters(arg)
 
     try:
-        prov, chapters = await asyncio.get_event_loop().run_in_executor(None, _work)
+        chapters = await asyncio.get_event_loop().run_in_executor(None, _work)
     except Exception as e:
         return await cq.edit_message_caption(
             f"<blockquote>❌ ᴄʜᴀᴘᴛᴇʀ ʟɪꜱᴛ ꜰᴀɪʟᴇᴅ: {e}</blockquote>",
@@ -305,7 +309,10 @@ async def on_manga_chpage(client: Client, cq):
     if user_id not in user_manga:
         return await cq.answer("❌ ꜱᴇꜱꜱɪᴏɴ ᴇxᴘɪʀᴇᴅ.", show_alert=True)
     await cq.answer()
-    await _render_chapters(cq, user_id, cq.pattern.group(1), int(cq.pattern.group(2)))
+    _m = re.match(r"^mgc_(.+)_(\d+)$", cq.data or "")
+    if not _m:
+        return await cq.answer()
+    await _render_chapters(cq, user_id, _m.group(1), int(_m.group(2)))
 
 
 @Client.on_callback_query(filters.regex(r"^mgi_"))
@@ -329,7 +336,10 @@ async def on_manga_respage(client: Client, cq):
     if not state:
         return await cq.answer("❌ ꜱᴇꜱꜱɪᴏɴ ᴇxᴘɪʀᴇᴅ.", show_alert=True)
     await cq.answer()
-    state["res_page"] = int(cq.pattern.group(1))
+    _m = re.match(r"^mgsl_(\d+)$", cq.data or "")
+    if not _m:
+        return await cq.answer()
+    state["res_page"] = int(_m.group(1))
     await _render_results(cq.message, cq.from_user.id, state["res_page"])
 
 
@@ -376,8 +386,11 @@ async def on_manga_download(client: Client, cq):
     if user_id in _busy:
         return await cq.answer("⏳ ᴏɴᴇ ᴄʜᴀᴘᴛᴇʀ ᴀᴛ ᴀ ᴛɪᴍᴇ — ꜱᴛɪʟʟ ᴡᴏʀᴋɪɴɢ…", show_alert=True)
 
-    key, page, j, fmt = (cq.pattern.group(1), int(cq.pattern.group(2)),
-                         int(cq.pattern.group(3)), cq.pattern.group(4))
+    _m = re.match(r"^mgd_(.+)_(\d+)_(\d+)_(pdf|cbz)$", cq.data or "")
+    if not _m:
+        return await cq.answer()
+    key, page, j, fmt = (_m.group(1), int(_m.group(2)),
+                         int(_m.group(3)), _m.group(4))
     chapters = (state.get("chapters") or {}).get(key) or []
     manga = (state.get("mangas") or {}).get(key)
     idx = page * PAGE_SIZE + j

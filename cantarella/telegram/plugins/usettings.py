@@ -9,6 +9,7 @@
 # ============================================================================
 
 import logging
+import re
 
 from pyrogram import Client, filters
 from pyrogram.enums import ParseMode
@@ -95,7 +96,10 @@ async def premium_cmd(client: Client, message):
 
 @Client.on_callback_query(filters.regex(r"^us_fmt_(pdf|cbz)$"))
 async def on_us_fmt(client: Client, cq):
-    fmt = cq.pattern.group(1)
+    _m = re.match(r"^us_fmt_(pdf|cbz)$", cq.data or "")
+    if not _m:
+        return await cq.answer()
+    fmt = _m.group(1)
     try:
         from cantarella.core.database import db
         await db.set_user_setting(cq.from_user.id, "manga_format", fmt)
