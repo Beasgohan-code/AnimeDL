@@ -268,6 +268,12 @@ async def run():
     # Ongoing-episode auto-download scheduler (anime core)
     from cantarella.telegram.ongoing import ongoing_task
     bg_tasks = [asyncio.create_task(ongoing_task(app))]
+    try:
+        from cantarella.telegram.plugins.mtracker import sub_check_loop
+        bg_tasks.append(asyncio.create_task(sub_check_loop(app)))
+        logger.info("🔔 Manga chapter tracker started")
+    except Exception as e:
+        logger.warning("manga tracker failed to start: %s", e)
 
     # Reliability layer: keep-alive pinger + watchdog
     import reliability

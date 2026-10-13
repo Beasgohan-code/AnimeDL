@@ -28,6 +28,7 @@ class Database:
             self.mapped_channels            = self.db["mapped_channels"]
             self.favorites                  = self.db["favorites"]
             self.watch_history              = self.db["watch_history"]
+            self.manga_subs                = self.db["manga_subs"]
 
             # Backward-compat aliases
             self.col    = self.user_data
@@ -39,6 +40,7 @@ class Database:
             self.user_data = self.channel_data = self.admins_data = None
             self.del_timer_data = self.ban_data = self.fsub_data = None
             self.watch_history = None
+            self.manga_subs = None
             self.rqst_fsub_data = self.rqst_fsub_Channel_data = None
             self.sequence_mode = self.processed = self.settings = None
             self.col = self.users = self.admins = None
@@ -60,6 +62,11 @@ class Database:
                 banned_on=date.max.isoformat(),
                 ban_reason="",
             ),
+            premium_status=dict(
+                is_premium=False,
+                premium_until="",
+                granted_on="",
+            )
         )
 
     async def add_user(self, user_id: int, username: str = None):
@@ -175,6 +182,341 @@ class Database:
         except Exception as e:
             logging.error(f"ᴇʀʀᴏʀ ʟɪꜱᴛɪɴɢ ʙᴀɴꜱ: {e}")
             return []
+
+    # ══════════════════════════════════════════════════════
+    #  PREMIUM (💎 — unlocks 18+ manga/manhua sources)
+    # ══════════════════════════════════════════════════════
+
+    async def is_premium(self, user_id: int) -> bool:
+        if self.user_data is None:
+            return False
+        try:
+            user = await self.user_data.find_one({"_id": int(user_id)})
+            p = (user or {}).get("premium_status") or {}
+            if not p.get("is_premium"):
+                return False
+            until = p.get("premium_until") or ""
+            if until and until != date.max.isoformat():
+                from datetime import datetime as _dt
+                try:
+                    if _dt.strptime(until, "%Y-%m-%d").date() < date.today():
+                        return False
+                except ValueError:
+                    pass
+            return True
+        except Exception as e:
+            logging.error(f"ᴇʀʀᴏʀ ᴄʜᴇᴄᴋɪɴɢ ᴘʀᴇᴍɪᴜᴍ ꜰᴏʀ {user_id}: {e}")
+            return False
+
+    async def premium_until(self, user_id: int) -> str:
+        if self.user_data is None:
+            return ""
+        try:
+            user = await self.user_data.find_one({"_id": int(user_id)})
+            return ((user or {}).get("premium_status") or {}).get(
+                "premium_until") or ""
+        except Exception:
+            return ""
+
+    async def set_premium(self, user_id: int, days: int = 30) -> bool:
+        if self.user_data is None:
+            return False
+        try:
+            from datetime import timedelta
+            until = date.today() + timedelta(days=max(1, int(days)))
+            await self.user_data.update_one(
+                {"_id": int(user_id)},
+                {"$set": {"premium_status": dict(
+                    is_premium=True,
+                    premium_until=until.isoformat(),
+                    granted_on=date.today().isoformat())}},
+                upsert=True)
+            return True
+        except Exception as e:
+            logging.error(f"ᴇʀʀᴏʀ ꜱᴇᴛᴛɪɴɢ ᴘʀᴇᴍɪᴜᴍ {user_id}: {e}")
+            return False
+
+    async def remove_premium(self, user_id: int) -> bool:
+        if self.user_data is None:
+            return False
+        try:
+            await self.user_data.update_one(
+                {"_id": int(user_id)},
+                {"$set": {"premium_status": dict(
+                    is_premium=False, premium_until="", granted_on="")}})
+            return True
+        except Exception as e:
+            logging.error(f"ᴇʀʀᴏʀ ʀᴇᴍᴏᴠɪɴɢ ᴘʀᴇᴍɪᴜᴍ {user_id}: {e}")
+            return False
+
+    async def list_premium(self) -> list:
+        if self.user_data is None:
+            return []
+        try:
+            out = []
+            async for u in self.user_data.find(
+                    {"premium_status.is_premium": True}):
+                out.append(u)
+            return out
+        except Exception as e:
+            logging.error(f"ᴇʀʀᴏʀ ʟɪꜱᴛɪɴɢ ᴘʀᴇᴍɪᴜᴍ: {e}")
+            return []
+
+    # ════════════════════════════════════════════════════
+    # MANGA SUBSCRIPTIONS (chapter tracker)
+
+    async def add_manga_sub(self, uid: int, provider: str,
+                            series_id: str, title: str, cover: str = "",
+                            url: str = "", last_chapter: str = "0") -> dict:
+        if self.manga_subs is None:
+            return {}
+        _id = f"{int(uid)}:{provider}:{series_id}"
+        existing = await self.manga_subs.find_one({"_id": _id})
+        if existing:
+            return existing
+        doc = dict(_id=_id, uid=int(uid), provider=provider,
+                   series_id=series_id, title=title, cover=cover,
+                   url=url, last_chapter=str(last_chapter),
+                   last_title="", added=date.today().isoformat())
+        await self.manga_subs.insert_one(doc)
+        return doc
+
+    async def get_manga_subs(self, uid: int = None) -> list:
+        if self.manga_subs is None:
+            return []
+        q = {"uid": int(uid)} if uid else {}
+        return await self.manga_subs.find(q).to_list(200)
+
+    async def del_manga_sub(self, uid: int, sid: str) -> bool:
+        if self.manga_subs is None:
+            return False
+        r = await self.manga_subs.delete_one(
+            {"_id": str(sid), "uid": int(uid)})
+        return bool(r.deleted_count)
+
+    async def del_manga_subs_all(self, uid: int) -> int:
+        if self.manga_subs is None:
+            return 0
+        r = await self.manga_subs.delete_many({"uid": int(uid)})
+        return int(r.deleted_count)
+
+    async def update_manga_sub(self, sid: str, last_chapter: str = "0",
+                               last_title: str = "") -> bool:
+        if self.manga_subs is None:
+            return False
+        await self.manga_subs.update_one(
+            {"_id": str(sid)},
+            {"$set": {"last_chapter": str(last_chapter),
+                       "last_title": last_title or "",
+                       "checked_on": date.today().isoformat()}})
+        return True
+
+    # ════════════════════════════════════════════════════
+    # ══════════════════════════════════════════════════════
+    #  MAPPED CHANNELS
+    # ══════════════════════════════════════════════════════
+
+    async def set_mapped_channel(self, anime_name: str, channel_id: int):
+        if self.mapped_channels is not None:
+            await self.mapped_channels.update_one(
+                {"_id": channel_id},
+                {"$addToSet": {"anime_names": anime_name.lower()}},
+                upsert=True
+            )
+
+    async def remove_mapped_channel(self, channel_id: int):
+        if self.mapped_channels is not None:
+            await self.mapped_channels.delete_one({"_id": channel_id})
+
+    async def get_mapped_channel(self, title: str):
+        if self.mapped_channels is None:
+            return None
+        cursor = self.mapped_channels.find({})
+        channels = await cursor.to_list(None)
+        title_lower = title.lower()
+
+        for doc in channels:
+            for mapped_name in doc.get("anime_names", []):
+                # Ensure a more accurate match by comparing standard length
+                if mapped_name == title_lower or (len(mapped_name) > 3 and mapped_name in title_lower):
+                    return doc["_id"]
+        return None
+
+    async def get_all_mappings(self):
+        if self.mapped_channels is None:
+            return []
+        cursor = self.mapped_channels.find({})
+        return await cursor.to_list(length=1000)
+
+    # ══════════════════════════════════════════════════════
+    #  USER SETTINGS  (generic key-value per user)
+    # ══════════════════════════════════════════════════════
+
+    async def get_user_setting(self, user_id: int, key: str, default=None):
+        if self.settings is None:
+            return default
+        user = await self.settings.find_one({"_id": user_id})
+        if user and key in user:
+            return user[key]
+        return default
+
+    async def set_user_setting(self, user_id: int, key: str, value):
+        if self.settings is not None:
+            await self.settings.update_one(
+                {"_id": user_id},
+                {"$set": {key: value}},
+                upsert=True
+            )
+
+    async def get_processed_count(self) -> int:
+        if self.processed is None:
+            return 0
+        return await self.processed.count_documents({})
+
+    # ══════════════════════════════════════════════════════
+    #  PROCESSED EPISODES
+    # ══════════════════════════════════════════════════════
+
+    async def is_processed(self, ep_identifier: str) -> bool:
+        if self.processed is None:
+            return False
+        return await self.processed.find_one({"_id": ep_identifier}) is not None
+
+    async def mark_processed(self, ep_identifier: str):
+        if self.processed is not None:
+            await self.processed.update_one(
+                {"_id": ep_identifier},
+                {"$set": {"processed": True}},
+                upsert=True
+            )
+
+    # ══════════════════════════════════════════════════════
+    #  ADMIN MANAGEMENT
+    # ══════════════════════════════════════════════════════
+
+    async def is_admin(self, user_id: int) -> bool:
+        if self.admins_data is None:
+            return False
+        return bool(await self.admins_data.find_one({"_id": int(user_id)}))
+
+    async def add_admin(self, user_id: int, name: str = None) -> bool:
+        if self.admins_data is None:
+            return False
+        try:
+            await self.admins_data.update_one(
+                {"_id": int(user_id)},
+                {"$set": {"_id": int(user_id), "name": name, "added_at": datetime.utcnow()}},
+                upsert=True
+            )
+            return True
+        except Exception as e:
+            logging.error(f"ᴇʀʀᴏʀ ᴀᴅᴅɪɴɢ ᴀᴅᴍɪɴ {user_id}: {e}")
+            return False
+
+    async def remove_admin(self, user_id: int) -> bool:
+        if self.admins_data is None:
+            return False
+        result = await self.admins_data.delete_one({"_id": int(user_id)})
+        return result.deleted_count > 0
+
+    async def list_admins(self) -> list:
+        if self.admins_data is None:
+            return []
+        admins = await self.admins_data.find({}).to_list(None)
+        return [a["_id"] for a in admins]
+
+    # Alias used by old code
+    async def get_all_admins(self) -> list:
+        if self.admins_data is None:
+            return []
+        cursor = self.admins_data.find({})
+        return await cursor.to_list(length=100)
+
+    # ══════════════════════════════════════════════════════
+    #  FORCE-SUB CHANNEL MANAGEMENT
+    # ══════════════════════════════════════════════════════
+
+    async def add_fsub_channel(self, channel_id: int) -> bool:
+        if self.fsub_data is None:
+            return False
+        try:
+            await self.fsub_data.update_one(
+                {"channel_id": channel_id},
+                {"$set": {
+                    "channel_id": channel_id,
+                    "created_at": datetime.utcnow(),
+                    "status": "active",
+                    "mode": "off"
+                }},
+                upsert=True
+            )
+            return True
+        except Exception as e:
+            logging.error(f"ᴇʀʀᴏʀ ᴀᴅᴅɪɴɢ ꜰꜱᴜʙ ᴄʜᴀɴɴᴇʟ {channel_id}: {e}")
+            return False
+
+    async def remove_fsub_channel(self, channel_id: int) -> bool:
+        if self.fsub_data is None:
+            return False
+        result = await self.fsub_data.delete_one({"channel_id": channel_id})
+        return result.deleted_count > 0
+
+    async def get_fsub_channels(self) -> List[int]:
+        if self.fsub_data is None:
+            return []
+        cursor   = self.fsub_data.find({"status": "active"})
+        channels = await cursor.to_list(None)
+        return [ch["channel_id"] for ch in channels if "channel_id" in ch]
+
+    # Alias for backward compatibility
+    async def show_channels(self) -> List[int]:
+        return await self.get_fsub_channels()
+
+    async def get_channel_mode(self, channel_id: int) -> str:
+        if self.fsub_data is None:
+            return "off"
+        data = await self.fsub_data.find_one({"channel_id": channel_id})
+        return data.get("mode", "off") if data else "off"
+
+    # Alias for backward compatibility
+    async def get_channel_mode_all(self, channel_id: int) -> str:
+        return await self.get_channel_mode(channel_id)
+
+    async def set_channel_mode(self, channel_id: int, mode: str):
+        if self.fsub_data is not None:
+            await self.fsub_data.update_one(
+                {"channel_id": channel_id},
+                {"$set": {"mode": mode}},
+                upsert=True
+            )
+
+    # ══════════════════════════════════════════════════════
+    #  REQUEST FORCE-SUB HELPERS
+    # ══════════════════════════════════════════════════════
+
+    async def req_user(self, channel_id: int, user_id: int):
+        if self.rqst_fsub_Channel_data is not None:
+            await self.rqst_fsub_Channel_data.update_one(
+                {"channel_id": int(channel_id)},
+                {"$addToSet": {"user_ids": int(user_id)}},
+                upsert=True
+            )
+
+    async def del_req_user(self, channel_id: int, user_id: int):
+        if self.rqst_fsub_Channel_data is not None:
+            await self.rqst_fsub_Channel_data.update_one(
+                {"channel_id": channel_id},
+                {"$pull": {"user_ids": user_id}}
+            )
+
+    async def req_user_exist(self, channel_id: int, user_id: int) -> bool:
+        if self.rqst_fsub_Channel_data is None:
+            return False
+        found = await self.rqst_fsub_Channel_data.find_one({
+            "channel_id": int(channel_id),
+            "user_ids":   int(user_id)
+        })
+        return bool(found)
 
     # ══════════════════════════════════════════════════════
     #  FAVORITES
