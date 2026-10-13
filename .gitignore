@@ -1,0 +1,26 @@
+# — Python —
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# — Sessions & secrets —
+*.session
+*.session-journal
+.env
+credentials.json
+token.pickle
+
+# — Bot scratch data —
+downloads/
+logs/
+temp/
+thumbnails/
+work/
+
+# — Editors/OS —
+.idea/
+.vscode/
+.DS_Store
+venv-anime/

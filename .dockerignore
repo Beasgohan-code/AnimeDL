@@ -1,0 +1,30 @@
+# Keep the build context lean (the repo ships ~20 MB of .git otherwise)
+.git
+.venv
+venv
+__pycache__
+**/__pycache__
+*.pyc
+
+# Secrets — never bake into the image
+.env
+credentials.json
+token.pickle
+*.session
+*.session-journal
+
+# Runtime scratch data
+downloads/
+logs/
+temp/
+thumbnails/
+work/
+heartbeat.json
+
+# Editor / OS noise
+.idea/
+.vscode/
+.DS_Store
+
+# Docs not needed at runtime
+.github/

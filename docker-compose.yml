@@ -1,0 +1,41 @@
+# ============================================================================
+#  AnimeDL — Docker Compose deployment
+#  1) cp .env.example .env   and fill in your values
+#  2) docker compose up -d
+# ============================================================================
+services:
+  animedl:
+    build: .
+    container_name: animedl
+    env_file: .env
+    ports:
+      - "8080:8080"
+    volumes:
+      - animedl_data:/tmp/animedl          # leech scratch space + sessions
+      - ./binary:/app/binary               # keep binaries external if you like
+    restart: unless-stopped
+    init: true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── Optional self-hosted anime REST APIs (profile: remote-sources) ──
+  # Enable with:  docker compose --profile remote-sources up -d
+  # Then set ANIMEDL_CONSUMET_URL=http://consumet:4000 and
+  #          ANIMEDL_ANIWATCH_URL=http://aniwatch-api:3000  in .env
+  consumet:
+    image: riimuru/consumet-api:latest
+    container_name: consumet
+    profiles: ["remote-sources"]
+    restart: unless-stopped
+
+  aniwatch-api:
+    image: ghoshritesh12/aniwatch-api:latest
+    container_name: aniwatch-api
+    profiles: ["remote-sources"]
+    restart: unless-stopped
+
+volumes:
+  animedl_data:

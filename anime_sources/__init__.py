@@ -1,0 +1,467 @@
+# ============================================================================
+#  AnimeDL — Multi-source anime engine
+# ============================================================================
+#  One import away from every anime source the bot supports:
+#
+#      from anime_sources import get_provider, download_episode
+#
+#  Sources (in-process): hianime.at, api.allanime.day, animegg.org,
+#                         AniWave family (animewave.to/anikototv.to/animekaitv.to),
+#                         GogoAnime (anitaku.pe), AnimePahe (.com),
+#                         Zangetsu, TokyoInsider
+#  Sources (remote):     Consumet-compatible & Aniwatch-API REST servers
+#  Legacy sources:       Animetsu & AniWatch (cantarella scrapers, unchanged)
+# ============================================================================
+
+import logging
+import os
+import re
+from pathlib import Path
+
+import requests
+
+from anime_sources.base import (  # noqa: F401
+    BaseProvider, Episode, ResolvedEpisode, SearchResult, SourceError,
+    Stream, get_provider, is_provider_url, provider_id_for_url,
+    next_episode_url, SOURCE_CYCLE, SOURCE_NAMES,
+)
+from anime_sources.streamdl import download_stream  # noqa: F401
+
+logger = logging.getLogger(__name__)
+
+
+# ── Source circuit breaker (v4.20.0) ────────────────────────────────────────
+# A source whose host is DNS-dead / network-dead from this server (gogo on
+# Render: anitaku.to, gogoanimehd.io, gogoanime.hu all unresolvable) burns
+# ~50s of retries per search — inside cross-source recovery that multiplied
+# by 7 sources froze every failed download for minutes. After one hard
+# network failure the source is skipped for BREAKER_TTL seconds.
+import time as _time
+
+BREAKER_TTL = 900  # 15 min
+_SOURCE_BREAKER = {}  # provider_id -> reopen timestamp
+
+_DNS_MARKERS = (
+    "name or service not known", "failed to resolve", "no address associated",
+    "temporary failure in name resolution", "getaddrinfo failed",
+)
+
+
+def breaker_open(provider_id: str) -> bool:
+    until = _SOURCE_BREAKER.get(provider_id)
+    if not until:
+        return False
+    if _time.time() < until:
+        return True
+    _SOURCE_BREAKER.pop(provider_id, None)
+    return False
+
+
+def breaker_trip(provider_id: str, ttl: int = BREAKER_TTL) -> None:
+    _SOURCE_BREAKER[provider_id] = _time.time() + ttl
+    logger.warning("%s: circuit breaker OPEN — host unreachable, skipping for %ds",
+                   provider_id, ttl)
+
+
+def _is_network_dead(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(m in text for m in _DNS_MARKERS)
+
+
+def search_provider(provider_id: str, query: str) -> list:
+    """Search one provider; returns dicts shaped like the legacy scrapers'
+    results so the Telegram layer needs no special casing."""
+    if breaker_open(provider_id):
+        logger.info("%s: breaker open — search skipped", provider_id)
+        return []
+    try:
+        provider = get_provider(provider_id)
+        return [
+            {
+                "title": r.title,
+                # namespaced ids flow through the existing callback chain
+                "id": f"{provider_id}:{r.id}",
+                "type": f"{provider.name} · {r.type}" if r.type else provider.name,
+                "provider": provider_id,
+            }
+            for r in provider.search(query)
+        ]
+    except Exception as e:
+        logger.warning("search on %s failed: %s", provider_id, e)
+        if _is_network_dead(e):
+            breaker_trip(provider_id)
+        return []
+
+
+def list_provider_episodes(provider_id: str, anime_id: str) -> list:
+    """List episodes for a provider anime; returns legacy entry dicts
+    ({'title', 'number', 'url', 'type'})."""
+    provider = get_provider(provider_id)
+    entries = []
+    for ep in provider.episodes(anime_id):
+        entries.append({
+            "title": ep.title or f"Episode {ep.number}",
+            "number": ep.number,
+            "url": ep.url,
+            "type": provider.name,
+        })
+    return entries
+
+
+# recovery miss-cache (v4.20.2): one user tap ran recovery up to 6×
+# (2 resolve tries × 3 retry attempts); each miss costs ~15-40s of searches.
+_RECOVERY_MISS_TTL = 180
+_RECOVERY_MISS = {}   # url -> last-miss timestamp
+
+
+def _cross_source_recover(url, progress_queue, name_hint=None):
+    """Last-resort: a legacy/dead-source episode URL is re-resolved on LIVE
+    sources by show-slug + episode number. Returns (provider, resolved) or
+    None. This is what makes 'just send the link' work even when the site
+    the link points at is gone.
+
+    name_hint: the human show title the UI already knows (v4.19.1). The
+    source's own show-name API may be rate-limited exactly when its streams
+    are — the hint lets recovery proceed anyway."""
+    import logging as _log
+    from anime_sources.base import SourceError as _SE
+    u = (url or "").lower()
+    legacy = any(k in u for k in ("animetsu", "aniwatch", "animepahe.si/"))
+    m_slug = re.search(r"/(?:anime|watch)/([a-z0-9-]+)", u)
+    m_id = re.match(r"([a-z]+)://([^/]+)/([^/?#]+)", u)   # e.g. allanime://<showid>/<ep>
+    if not m_slug and m_id:
+        # ID-only URL: ask the source provider for the show NAME, then
+        # recover the same episode on the live sources by name + number
+        try:
+            # collect every name the source knows + the UI's title — the
+            # romaji can be an unsearchable short form ('1P') while the
+            # english variant finds the show elsewhere (v4.20.0)
+            name_candidates = []
+            try:
+                src_prov = get_provider(m_id.group(1))
+                if hasattr(src_prov, "show_name_variants"):
+                    name_candidates = [
+                        v for v in (src_prov.show_name_variants(m_id.group(2)) or []) if v]
+                else:
+                    _n = getattr(src_prov, "show_name", lambda _sid: "")(m_id.group(2)) or ""
+                    name_candidates = [_n] if _n else []
+            except Exception:
+                name_candidates = []
+            if name_hint and name_hint not in name_candidates:
+                name_candidates.append(name_hint)
+            if not name_candidates:
+                return None
+            ep_num = m_id.group(3)
+            if "?" in ep_num:  # schemes that carry query data (aniwave ids=…)
+                ep_num = ep_num.split("?", 1)[0]
+            _log.getLogger(__name__).info(
+                "recovery(id): names=%s ep=%s", name_candidates, ep_num)
+            progress_queue.put({"status": f"🔁 ꜱᴏᴜʀᴄᴇ ꜰᴀɪʟᴇᴅ — ꜰɪɴᴅɪɴɢ '{name_candidates[0]}' ᴇᴘ {ep_num} ᴇʟꜱᴇᴡʜᴇʀᴇ…"})
+            from anime_sources.base import cached_streams as _cs2
+            for name in name_candidates:
+                words = [w for w in re.split(r"[^a-z0-9]+", name.lower()) if w]
+                for src in ("hianime", "animegg", "aniwave", "aniworld", "animeworldind", "zangetsu", "gogo"):
+                    try:
+                        results = search_provider(src, name)
+                    except Exception as _se:
+                        _log.getLogger(__name__).info(
+                            "recovery(id): %s search failed: %s", src, _se)
+                        continue
+                    if not results:
+                        _log.getLogger(__name__).info(
+                            "recovery(id): %s '%s' → 0 results", src, name)
+                        continue
+                    def _score(r, words=words):
+                        rid = str(r.get("id", "")).lower()
+                        return sum(1 for w in words if w in rid)
+                    best = max(results, key=_score)
+                    if _score(best) == 0:
+                        _log.getLogger(__name__).info(
+                            "recovery(id): %s '%s' → no title match in %d results",
+                            src, name, len(results))
+                        continue
+                    prov = get_provider(src)
+                    anime_id = best["id"].split(":", 1)[-1]
+                    try:
+                        eps = prov.episodes(anime_id)
+                    except Exception as _ee:
+                        _log.getLogger(__name__).info(
+                            "recovery(id): %s episodes failed: %s", src, _ee)
+                        continue
+                    ep = next((e for e in eps if str(e.number) == str(ep_num)), None)
+                    if ep is None:
+                        _log.getLogger(__name__).info(
+                            "recovery(id): %s has %d eps, #%s missing", src, len(eps), ep_num)
+                        continue
+                    try:
+                        resolved = _cs2(f"res:{src}:{ep.url}", prov.resolve, ep.url)
+                    except Exception as _re:
+                        # per-source isolation: one embed crash must not abort the rest
+                        _log.getLogger(__name__).info(
+                            "recovery(id): %s resolve failed: %s", src, _re)
+                        continue
+                    if resolved and getattr(resolved, "streams", []):
+                        progress_queue.put({"status": f"✅ ꜰᴏᴜɴᴅ ᴏɴ {prov.name} — ᴅᴏᴡɴʟᴏᴀᴅɪɴɢ…"})
+                        return prov, resolved
+        except Exception as e:
+            logging.getLogger(__name__).info("ID-recovery failed: %s", e)
+        logging.getLogger(__name__).info(
+            "recovery(id): exhausted — no source served this episode")
+        return None
+    if not m_slug:
+        if legacy:
+            return None
+        m_slug = re.search(r"'([^']*)' ep", u)
+        if not m_slug:
+            return None
+    slug = m_slug.group(1)
+    m_ep = re.search(r"episode[_-](\d+)", u) or re.search(r"[?&]ep=([^&/]+)", u)
+    ep_num = m_ep.group(1) if m_ep else None
+    # "show-name-123" style slugs: trailing number is usually not the ep
+    words = [w for w in slug.split("-") if not w.isdigit()]
+    query = " ".join(words[:5])
+    _log.getLogger(__name__).info(
+        "cross-source recovery: '%s' ep=%s from %s", query, ep_num, u[:60])
+    progress_queue.put({"status": f"🔁 ꜱᴏᴜʀᴄᴇ ꜰᴀɪʟᴇᴅ — ꜰɪɴᴅɪɴɢ '{query}' ᴏɴ ᴀɴᴏᴛʜᴇʀ ꜱᴏᴜʀᴄᴇ…"})
+    from anime_sources.base import cached_streams as _cs
+    for src in ("hianime", "allanime", "animegg", "aniwave", "aniworld", "animeworldind", "zangetsu", "gogo"):
+        try:
+            results = search_provider(src, query)
+            if not results:
+                _log.getLogger(__name__).info("recovery: %s → 0 results", src)
+                continue
+            # best title match on the slug words
+            def _score(r):
+                rid = str(r.get("id", "")).lower()
+                return sum(1 for w in words if w in rid)
+            best = max(results, key=_score)
+            if _score(best) == 0:
+                _log.getLogger(__name__).info(
+                    "recovery: %s → no title match in %d results", src, len(results))
+                continue
+            prov = get_provider(src)
+            anime_id = best["id"].split(":", 1)[-1]
+            eps = prov.episodes(anime_id)
+            ep = None
+            if ep_num:
+                for e in eps:
+                    if str(e.number) == str(ep_num):
+                        ep = e
+                        break
+            if ep is None and eps:
+                ep = eps[0]
+            if ep is None:
+                continue
+            try:
+                resolved = _cs(f"res:{src}:{ep.url}", prov.resolve, ep.url)
+            except Exception as _re:
+                _log.getLogger(__name__).info(
+                    "recovery: %s resolve failed: %s", src, _re)
+                continue
+            if resolved and getattr(resolved, "streams", []):
+                _log.getLogger(__name__).info(
+                    "cross-source recovery: served by %s", src)
+                progress_queue.put({"status": f"✅ ꜰᴏᴜɴᴅ ᴏɴ {prov.name} — ᴅᴏᴡɴʟᴏᴀᴅɪɴɢ…"})
+                return prov, resolved
+        except Exception as e:
+            _log.getLogger(__name__).info("recovery via %s failed: %s", src, e)
+    return None
+
+
+def download_provider_episode(url: str, download_path: Path, progress_queue,
+                              quality: str = "auto", name_override: str = None,
+                              season_override: str = None,
+                              ep_num_override: str = None,
+                              title_fallback: str = None,
+                              ep_num_fallback: str = None) -> bool:
+    """Resolve + download one episode from any provider, emitting the
+    progress-queue contract used by cantarella's upload pipeline.
+
+    Returns True when at least one file was handed to the queue.
+    """
+    try:
+        provider_id = provider_id_for_url(url)
+        provider = get_provider(provider_id)
+    except Exception:
+        # unknown/dead-source URL → skip straight to cross-source recovery
+        provider_id, provider = None, None
+
+    # Retry the resolve step once — embed/server pages fail transiently
+    # (Cloudflare interstitials, AJAX blips), and a batch/auto run should
+    # not lose an episode to a one-off hiccup.
+    resolved = None
+    from anime_sources.base import SourceError as _SE, cached_streams as _cs
+    for _attempt in range(2 if provider is not None else 0):
+        try:
+            # cache-hit when the quality menu prefetched this episode already
+            resolved = _cs(f"res:{provider_id}:{url}", provider.resolve, url)
+            break
+        except Exception as e:
+            # PROD FIX (v4.19.0): this used to catch only (_SE, RequestException),
+            # so any resolver bug — e.g. AllAnime returning a JSON string and the
+            # code calling .get on it — escaped as the cryptic
+            # "Download error on attempt N: 'str' object has no attribute 'get'"
+            # instead of falling through to retry + cross-source recovery.
+            if _attempt:
+                break  # fall into cross-source recovery, then the guard raises
+            logging.getLogger(__name__).info(
+                "resolve failed for %s (%s: %s) — retrying once", url, type(e).__name__, e
+            )
+            import time as _t
+            _t.sleep(1.5)
+
+    # ── DUB FALLBACK (v4.20.0): some shows publish links for one audio
+    # track only (allanime '1P' EP19 served 0 sub sourceUrls). Retry the
+    # SAME provider in the other mode before abandoning the source. ──
+    if provider is not None and (resolved is None or not getattr(resolved, "streams", [])):
+        try:
+            resolved_dub = _cs(f"res:{provider_id}:{url}:dub", provider.resolve, url, "dub")
+            if resolved_dub and getattr(resolved_dub, "streams", []):
+                progress_queue.put({"status": "🔁 ꜱᴜʙ ʟɪɴᴋꜱ ᴇᴍᴘᴛʏ — ᴜꜱɪɴɢ ᴅᴜʙ ᴀᴜᴅɪᴏ…"})
+                resolved = resolved_dub
+        except Exception:
+            pass
+
+    # ── CROSS-SOURCE RECOVERY ──
+    # Legacy flows (default source was the DNS-dead animetsu / the rotated
+    # aniwatchtv) hand us URLs the engine can't resolve. Instead of dying,
+    # recover: search LIVE sources with the show slug from the URL, match
+    # the episode number, and download from whichever source serves it.
+    if resolved is None or not getattr(resolved, "streams", []):
+        import time as _tm
+        _miss_at = _RECOVERY_MISS.get(url)
+        if _miss_at and _tm.time() - _miss_at < _RECOVERY_MISS_TTL:
+            logging.getLogger(__name__).info(
+                "recovery: skipped — missed for this url %ds ago", int(_tm.time() - _miss_at))
+        else:
+            recovered = _cross_source_recover(
+                url, progress_queue, name_hint=(name_override or title_fallback))
+            if recovered is not None:
+                _RECOVERY_MISS.pop(url, None)
+                provider, provider_id, resolved = recovered[0], recovered[0].id, recovered[1]
+            else:
+                _RECOVERY_MISS[url] = _tm.time()
+    if resolved is None or not getattr(resolved, "streams", []):
+        raise _SE(f"resolve failed for {url} — no stream on any source")
+
+    # ── STREAM SHAPE NORMALIZATION (PROD FIX v4.19.0) ──
+    # Resolvers return dicts, Stream dataclasses (zangetsu/kaiwave/tokyoinsider),
+    # or — from a bad response — bare url strings. The downloader speaks ONE
+    # shape (dicts); without this, pick() crashed with
+    # "'str' object has no attribute 'get'" / "'Stream' object has no …".
+    _norm_streams = []
+    for s in (getattr(resolved, "streams", None) or []):
+        if isinstance(s, str):
+            if s.startswith("http"):
+                _norm_streams.append({"quality": "auto", "url": s})
+        elif isinstance(s, dict):
+            if s.get("url"):
+                _norm_streams.append(s)
+        else:
+            u = getattr(s, "url", "")
+            if u:
+                _norm_streams.append({
+                    "quality": getattr(s, "quality", "auto") or "auto",
+                    "url": u,
+                    "audio": getattr(s, "audio", "sub") or "sub",
+                    "headers": getattr(s, "headers", {}) or {},
+                })
+            # lift per-stream subtitles (kaiwave/zangetsu carry them on Stream)
+            st_subs = getattr(s, "subtitles", None)
+            if st_subs and not getattr(resolved, "subtitles", None):
+                resolved.subtitles = [st_subs] if isinstance(st_subs, str) else list(st_subs)
+    resolved.streams = _norm_streams
+    if _norm_streams and not (getattr(resolved, "subtitles", None) or []):
+        for n in _norm_streams:
+            st_subs = n.get("subtitles")
+            if st_subs:
+                resolved.subtitles = [st_subs] if isinstance(st_subs, str) else list(st_subs)
+                break
+
+    title = name_override or resolved.title or title_fallback or "Anime"
+    ep_num = str(ep_num_override or resolved.ep_num or ep_num_fallback or "1")
+    season = str(season_override or resolved.season or "1")
+
+    def sanitize(name: str) -> str:
+        return re.sub(r'[\\/*?:"<>|]', "", name)
+
+    def pick(streams, wanted: str):
+        # strict on a numeric want: the explicit fallback below reports the
+        # substitution to the user (silent best-guess hid quality surprises)
+        if wanted.isdigit():
+            for s in streams:
+                if str(s.get("quality")) == wanted:
+                    return s
+            return None
+        return streams[0] if streams else None
+
+    qual_str = quality if quality in ("360", "720", "1080") else "auto"
+    task_dir = download_path / f"{provider_id}_{sanitize(title)[:40]}_{ep_num}_{qual_str}"
+    task_dir.mkdir(parents=True, exist_ok=True)
+
+    from config import FORMAT as _F  # re-read inside thread-safe scope
+    base_name = sanitize(_F.format(
+        season=season, episode=ep_num, title=title,
+        quality=f"{qual_str}p", audio="JP",
+    ))
+
+    stream = pick(resolved.streams, quality if quality.isdigit() else "")
+    if not stream and quality.isdigit() and resolved.streams:
+        # quality fallback: requested variant missing → nearest available
+        stream = resolved.streams[0]
+        progress_queue.put({"status": f"ℹ️ {qual_str}ᴘ ɴᴏᴛ ᴀᴠᴀɪʟᴀʙʟᴇ — ᴜꜱɪɴɢ {stream.get('quality', 'auto')}"})
+    if not stream:
+        progress_queue.put({"error": f"No stream available on this source."})
+        return False
+
+    save_name = f"{base_name}_{provider_id}"
+    try:
+        final_path = download_stream(
+            stream_url=stream["url"],
+            headers=stream.get("headers") or {},
+            task_dir=task_dir,
+            save_name=save_name,
+            title=f"{title} [EP {ep_num}]",
+            progress_queue=progress_queue,
+        )
+
+        # rename to the canonical format name (keep extension)
+        final_file = download_path / f"{base_name}{Path(final_path).suffix}"
+        try:
+            os.replace(final_path, final_file)
+        except Exception:
+            final_file = Path(final_path)
+
+        # Subtitle embedding (hianime/aniwave/zangetsu resolvers ship .vtt
+        # tracks — mux them in, stream-copy) — before chapters so the
+        # chapter remux carries the sub streams too. Strictly fail-open.
+        _subs = list(getattr(resolved, "subtitles", []) or [])
+        if _subs:
+            try:
+                from anime_sources.subtitles import embed_subtitles
+                if embed_subtitles(str(final_file), _subs):
+                    progress_queue.put({"status": "ℹ️ ꜱᴜʙᴛɪᴛʟᴇꜱ ᴇᴍʙᴇᴅᴅᴇᴅ (ᴇɴɢ)"})
+            except Exception:
+                pass
+
+        # AniSkip chapters (OP/ED markers for players) — strictly fail-open
+        try:
+            from anime_sources.aniskip import maybe_add_chapters
+            if maybe_add_chapters(str(final_file), title, ep_num):
+                progress_queue.put({"status": "ℹ️ ᴏᴘ/ᴇᴅ ᴄʜᴀᴘᴛᴇʀꜱ ᴀᴅᴅᴇᴅ (ᴀɴɪꜱᴋɪᴘ)"})
+        except Exception:
+            pass
+
+        progress_queue.put({
+            "finished": True,
+            "filename": str(final_file),
+            "title": f"{base_name}",
+        })
+        return True
+    except Exception as e:
+        progress_queue.put({"error": f"{provider.name}: {e}"})
+        return False
+
+
+import os  # noqa: E402  (used in download_provider_episode)
+import re  # noqa: F402
