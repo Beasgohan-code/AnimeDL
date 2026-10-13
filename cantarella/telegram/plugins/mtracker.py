@@ -1,21 +1,21 @@
 # ============================================================================
-#  AnimeDL MangaTracker — chapter subscriptions (/msubscribe /msubs /munsub)
+#  AnimeDL MangaTracker — chapter subscriptions
+#  /msubscribe /msubs /munsub /mcheck /minterval /mchannel /mexport /mimport
 # ============================================================================
-#  Rebuilt natively on the AnimeDL manga engine. The polling/notification
-#  approach (follow a series → periodic newest-chapter check → announce with
-#  a one-tap download) follows the UX of auto-manga-chapter-update-bot and
-#  Manhwa-Bot; every line here is AnimeDL's own — no upstream code, no
-#  upstream credits. Checks reuse the SAME 15-provider engine as /manga.
-#
-#    /msubscribe <query>   follow a series (pick from search results)
-#    /msubs                your follows + last known chapter
-#    /munsub <id|all>      unfollow
-#    /mcheck               check all follows right now
-#
-#  Poll interval: MANGA_CHECK_MINUTES env (default 30, min 5).
+#  Rebuilt natively on the AnimeDL manga engine (the vendored sources/scrapers
+#  layer). Polling/notification approach follows the UX of
+#  auto-manga-chapter-update-bot + Manhwa-Bot; every line here is AnimeDL's
+#  own — no upstream code, no upstream credits. Features:
+#    • follow a series → periodic newest-chapter check (same engine)
+#    • photo update cards (series cover + one-tap download)
+#    • per-user check interval (/minterval) and optional update channel
+#      where new chapters also get posted (/mchannel)
+#    • /mexport · /mimport — follows backup as a JSON document
+#    • provider responses are cached (MANGA_CACHE_TTL, default 10 min)
 # ============================================================================
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -29,7 +29,7 @@ from config import VERSION
 
 logger = logging.getLogger(__name__)
 
-_sub_state = {}          # uid -> {"results": [...]} for msb_ picks & updates
+_sub_state = {}          # uid -> {"results": [...]} for msb_ picks
 
 
 def _interval_minutes() -> int:
@@ -37,6 +37,18 @@ def _interval_minutes() -> int:
         return max(5, int(os.getenv("MANGA_CHECK_MINUTES", "30") or "30"))
     except ValueError:
         return 30
+
+
+async def _user_interval(uid: int) -> int:
+    """per-user check interval (minutes) — default = operator env value."""
+    try:
+        from cantarella.core.database import db
+        v = await db.get_user_setting(uid, "minterval", None)
+        if v:
+            return max(5, min(720, int(v)))
+    except Exception:
+        pass
+    return _interval_minutes()
 
 
 def _sub_arg(sub: dict) -> str:
@@ -55,7 +67,6 @@ def _result_for(sub: dict):
 
 
 async def _newest_chapter(sub: dict):
-    """newest chapter of a followed series via the shared engine."""
     def _work():
         from manga_sources import get_provider
         return get_provider(sub["provider"]).chapters(_sub_arg(sub))
@@ -65,9 +76,9 @@ async def _newest_chapter(sub: dict):
 
 
 async def check_subs(uid: int = None) -> list:
-    """Check follows (one user or everyone). Returns
-    [(sub, chapter)] pairs that are NEWER than the stored last chapter
-    (DB already updated). One dead source never kills the scan."""
+    """Check follows (one user or everyone). Returns [(sub, chapter)] pairs
+    newer than the stored last chapter (DB already updated). One dead
+    source never kills the scan."""
     from cantarella.core.database import db
     subs = await db.get_manga_subs(uid)
     updates = []
@@ -93,12 +104,10 @@ async def check_subs(uid: int = None) -> list:
 
 
 def _update_card(uid: int, updates: list, header: str) -> tuple:
-    """(text, markup) for a set of (sub, chapter) updates; wires the existing
-    /manga chapter pipeline via mgp_ buttons."""
-    from manga_sources import PROVIDER_NAMES
+    """(caption, markup) for a set of (sub, chapter) updates; wires the
+    existing /manga chapter pipeline via mgp_ buttons."""
     from cantarella.telegram.plugins.manga import _badge
-    results = []
-    lines = []
+    results, lines = [], []
     for sub, ch in updates:
         results.append(_result_for(sub))
         i = len(results) - 1
@@ -107,10 +116,10 @@ def _update_card(uid: int, updates: list, header: str) -> tuple:
             f"ᴄʜᴀᴘᴛᴇʀ <b>{ch.number}</b>"
             + (f" · {ch.title[:24]}" if ch.title else "")
             + f"  <i>{_badge(sub['provider'])}</i>")
-    text = (f"<blockquote>{header}</blockquote>\n"
-            + "\n".join(f"<blockquote expandable>{l}</blockquote>"
-                        for l in lines)
-            + f"\n<i>ᴛᴀᴘ ᴀ ꜱᴇʀɪᴇꜱ → ᴄʜᴀᴘᴛᴇʀꜱ → 📄/📚 · ᴀɴɪᴍᴇᴅʟ ᴠ{VERSION}</i>")
+    caption = (f"<blockquote>{header}</blockquote>\n"
+               + "\n".join(f"<blockquote expandable>{l}</blockquote>"
+                           for l in lines)
+               + f"\n<i>ᴛᴀᴘ → ᴄʜᴀᴘᴛᴇʀꜱ → 📄/📚 · ᴀɴɪᴍᴇᴅʟ ᴠ{VERSION}</i>")
     buttons = []
     for i, r in enumerate(results):
         buttons.append([InlineKeyboardButton(
@@ -122,7 +131,45 @@ def _update_card(uid: int, updates: list, header: str) -> tuple:
                                      "mangas": {}, "chapters": {},
                                      "tried": []})
     st["results"] = results
-    return text, InlineKeyboardMarkup(buttons)
+    return caption, InlineKeyboardMarkup(buttons)
+
+
+async def deliver_updates(dest, uid: int, updates: list, header: str):
+    """Send update card(s): photo card when a cover exists, text fallback.
+    `dest` is anything with .reply_photo/.edit_text/.send_message style
+    helpers — resolved via small adapters below."""
+    caption, markup = _update_card(uid, updates, header)
+    cover = next((s.get("cover") for s, _ in updates if s.get("cover")), "")
+    # 1) reply-style target (a status Message)
+    if hasattr(dest, "reply_photo"):
+        if cover:
+            try:
+                m = await dest.reply_photo(cover, caption=caption,
+                                           reply_markup=markup,
+                                           parse_mode=ParseMode.HTML)
+                return m
+            except Exception:
+                pass
+        try:
+            return await dest.reply_text(caption, reply_markup=markup,
+                                         parse_mode=ParseMode.HTML)
+        except Exception:
+            return None
+    # 2) client-style target (background loop → send_message)
+    if hasattr(dest, "send_message"):
+        if cover:
+            try:
+                return await dest.send_photo(uid, cover, caption=caption,
+                                             reply_markup=markup,
+                                             parse_mode=ParseMode.HTML)
+            except Exception:
+                pass
+        try:
+            return await dest.send_message(uid, caption, reply_markup=markup,
+                                           parse_mode=ParseMode.HTML)
+        except Exception as e:
+            logger.info("notify %s failed: %s", uid, e)
+    return None
 
 
 # ─────────────────────────────────────────────
@@ -175,13 +222,13 @@ async def msubscribe_cmd(client: Client, message):
 @Client.on_callback_query(filters.regex(r"^msb_([a-z]+)_(\d+)$"))
 async def on_msub_pick(client: Client, cq):
     uid = cq.from_user.id
-    st = _sub_state.get(uid) or {}
-    results = st.get("results") or []
     import re as _re
     m = _re.match(r"^msb_([a-z]+)_(\d+)$", cq.data or "")
     if not m:
         return await cq.answer()
     pid, idx = m.group(1), int(m.group(2))
+    st = _sub_state.get(uid) or {}
+    results = st.get("results") or []
     if idx >= len(results):
         return await cq.answer("❌ ꜱᴛᴀʟᴇ ʟɪɴᴋ — /msubscribe ᴀɢᴀɪɴ.", show_alert=True)
     r = results[idx]
@@ -199,11 +246,12 @@ async def on_msub_pick(client: Client, cq):
     from cantarella.core.database import db
     saved = await db.add_manga_sub(**sub)
     title = saved.get("title") or r.title
+    interval = await _user_interval(uid)
     text = (f"<blockquote>🔔 <b>ꜰᴏʟʟᴏᴡɪɴɢ {title[:40]}</b></blockquote>\n"
-            f"<blockquote>{_badge(r.provider)} · ʟᴀᴛᴇꜱᴛ ᴋɴᴏᴡɴ: "
-            f"ᴄʜ {saved.get('last_chapter') or '?'}\n"
+            f"<blockquote>{r.cover and '🖼 '}"
+            f"ʟᴀᴛᴇꜱᴛ ᴋɴᴏᴡɴ: ᴄʜ {saved.get('last_chapter') or '?'}\n"
             f"ʏᴏᴜ'ʟʟ ɢᴇᴛ ᴀ ᴘɪɴɢ + ᴏɴᴇ-ᴛᴀᴘ ᴅᴏᴡɴʟᴏᴀᴅ ᴡʜᴇɴ ɴᴇᴡᴇʀ ᴄʜᴀᴘᴛᴇʀꜱ ᴅʀᴏᴘ"
-            f" (ᴇᴠᴇʀʏ {_interval_minutes()} ᴍɪɴ)</blockquote>")
+            f" (ᴇᴠᴇʀʏ {interval} ᴍɪɴ · /minterval ᴛᴏ ᴄʜᴀɴɢᴇ)</blockquote>")
     try:
         await cq.message.edit_text(text, parse_mode=ParseMode.HTML)
     except Exception:
@@ -227,6 +275,11 @@ async def msubs_cmd(client: Client, message):
     uid = message.from_user.id
     from cantarella.core.database import db
     subs = await db.get_manga_subs(uid)
+    interval = await _user_interval(uid)
+    try:
+        chan = await db.get_user_setting(uid, "mchannel", None)
+    except Exception:
+        chan = None
     if not subs:
         return await message.reply(
             "<blockquote>📭 ʏᴏᴜ'ʀᴇ ɴᴏᴛ ꜰᴏʟʟᴏᴡɪɴɢ ᴀɴʏᴛʜɪɴɢ ʏᴇᴛ — /msubscribe ꜱᴏʟᴏ leveling</blockquote>",
@@ -236,10 +289,10 @@ async def msubs_cmd(client: Client, message):
              f"{s.get('last_chapter') or '?'} <i>{_badge(s['provider'])}</i>"
              f" <code>/munsub {s['_id']}</code>"
              for s in subs[:20]]
-    text = (f"<blockquote>📚 <b>ʏᴏᴜʀ ꜰᴏʟʟᴏᴡꜱ ({len(subs)})</b> · ᴄʜᴇᴄᴋᴇᴅ ᴇᴠᴇʀʏ "
-            f"{_interval_minutes()} ᴍɪɴ</blockquote>\n"
+    text = (f"<blockquote>📚 <b>ʏᴏᴜʀ ꜰᴏʟʟᴏᴡꜱ ({len(subs)})</b> · ᴄʜᴇᴄᴋ ᴇᴠᴇʀʏ "
+            f"{interval} ᴍɪɴ · ᴄʜᴀɴɴᴇʟ: {('<code>' + str(chan) + '</code>') if chan else 'ᴏꜰꜰ'}</blockquote>\n"
             + "\n".join(f"<blockquote>{l}</blockquote>" for l in lines)
-            + "\n<i>/mcheck — ꜰᴏʀᴄᴇ ᴀ ꜱᴄᴀɴ ɴᴏᴡ</i>")
+            + "\n<i>/mcheck ꜰᴏʀᴄᴇ ꜱᴄᴀɴ · /mexport ʙᴀᴄᴋᴜᴘ · /minterval · /mchannel</i>")
     await message.reply(text, parse_mode=ParseMode.HTML)
 
 
@@ -285,20 +338,155 @@ async def mcheck_cmd(client: Client, message):
         return await status.edit_text(
             "<blockquote>✅ ᴀʟʟ ᴄᴀᴜɢʜᴛ ᴜᴘ — ɴᴏ ɴᴇᴡ ᴄʜᴀᴘᴛᴇʀꜱ.</blockquote>",
             parse_mode=ParseMode.HTML)
-    text, markup = _update_card(uid, updates,
-                                f"🔔 {len(updates)} ꜱᴇʀɪᴇꜱ ᴜᴘᴅᴀᴛᴇᴅ!")
+    await status.edit_text(f"<blockquote>🔔 {len(updates)} ꜱᴇʀɪᴇꜱ ᴜᴘᴅᴀᴛᴇᴅ!</blockquote>",
+                           parse_mode=ParseMode.HTML)
+    await deliver_updates(message, uid, updates, "🔔 ɴᴇᴡ ᴄʜᴀᴘᴛᴇʀꜱ:")
+
+
+# ─────────────────────────────────────────────
+#  /minterval · /mchannel — per-user tracker settings
+# ─────────────────────────────────────────────
+@Client.on_message(filters.private & filters.command("minterval"))
+@check_ban
+async def minterval_cmd(client: Client, message):
+    uid = message.from_user.id
+    parts = (message.text or "").split()
+    from cantarella.core.database import db
+    if len(parts) < 2:
+        cur = await _user_interval(uid)
+        return await message.reply(
+            f"<blockquote>⏱ ʏᴏᴜʀ ɪɴᴛᴇʀᴠᴀʟ: <b>{cur} ᴍɪɴ</b>\n"
+            f"ᴜꜱᴀɢᴇ: <code>/minterval 15</code> (5–720 ᴍɪɴ)</blockquote>",
+            parse_mode=ParseMode.HTML)
     try:
-        await status.edit_text(text, reply_markup=markup,
-                               parse_mode=ParseMode.HTML)
-    except Exception:
-        pass
+        v = max(5, min(720, int(parts[1])))
+    except ValueError:
+        return await message.reply(
+            "<blockquote>❌ ɢɪᴠᴇ ᴀ ɴᴜᴍʙᴇʀ: <code>/minterval 15</code></blockquote>",
+            parse_mode=ParseMode.HTML)
+    await db.set_user_setting(uid, "minterval", v)
+    await message.reply(
+        f"<blockquote>⏱ ᴄʜᴇᴄᴋ ɪɴᴛᴇʀᴠᴀʟ ꜱᴇᴛ: <b>{v} ᴍɪɴ</b></blockquote>",
+        parse_mode=ParseMode.HTML)
+
+
+@Client.on_message(filters.private & filters.command("mchannel"))
+@check_ban
+async def mchannel_cmd(client: Client, message):
+    uid = message.from_user.id
+    parts = (message.text or "").split()
+    from cantarella.core.database import db
+    if len(parts) < 2 or parts[1].lower() == "off":
+        await db.set_user_setting(uid, "mchannel", None)
+        return await message.reply(
+            "<blockquote>📵 ᴜᴘᴅᴀᴛᴇ ᴄʜᴀɴɴᴇʟ ᴏꜰꜰ — ᴘɪɴɢꜱ ᴄᴏᴍᴇ ʜᴇʀᴇ.</blockquote>",
+            parse_mode=ParseMode.HTML)
+    raw = parts[1]
+    try:
+        chat_id = int(raw)
+    except ValueError:
+        chat_id = None
+    if chat_id is None and raw.lstrip("@").isidentifier():
+        chat_id = raw                      # @username form
+    else:
+        try:
+            chat_id = int(raw)
+        except ValueError:
+            return await message.reply(
+                "<blockquote>❌ ɢɪᴠᴇ ᴀ ᴄʜᴀɴɴᴇʟ ɪᴅ ᴏʀ @ᴜꜱᴇʀɴᴀᴍᴇ: <code>/mchannel -1001234</code></blockquote>",
+                parse_mode=ParseMode.HTML)
+    # verify the bot can post there
+    try:
+        chat = await client.get_chat(chat_id)
+        await client.send_message(chat.id, "<blockquote>🔔 ᴀɴɪᴍᴇᴅʟ ᴄʜᴀᴘᴛᴇʀ ᴛʀᴀᴄᴋᴇʀ ᴡɪʟʟ ᴘᴏꜱᴛ ɴᴇᴡ ᴄʜᴀᴘᴛᴇʀꜱ ʜᴇʀᴇ.</blockquote>",
+                                  parse_mode=ParseMode.HTML)
+    except Exception as e:
+        return await message.reply(
+            f"<blockquote>❌ ᴄᴀɴ'ᴛ ᴘᴏꜱᴛ ᴛʜᴇʀᴇ ({str(e)[:80]}).\n"
+            f"ᴀᴅᴅ ᴍᴇ ᴀꜱ ᴀᴅᴍɪɴ ᴡɪᴛʜ ᴘᴏꜱᴛ ʀɪɢʜᴛꜱ ꜰɪʀꜱᴛ.</blockquote>",
+            parse_mode=ParseMode.HTML)
+    await db.set_user_setting(uid, "mchannel", chat.id if hasattr(chat, "id") else chat_id)
+    await message.reply(
+        "<blockquote>🔔 ᴜᴘᴅᴀᴛᴇ ᴄʜᴀɴɴᴇʟ ꜱᴇᴛ! ɴᴇᴡ ᴄʜᴀᴘᴛᴇʀ 괄ᴀʀᴅꜱ ᴡɪʟʟ ᴀʟꜱᴏ ᴀᴘᴘᴇᴀʀ ᴛʜᴇʀᴇ. (/mchannel ᴏꜰꜰ)</blockquote>",
+        parse_mode=ParseMode.HTML)
+
+
+# ─────────────────────────────────────────────
+#  /mexport · /mimport — follows backup (JSON doc)
+# ─────────────────────────────────────────────
+@Client.on_message(filters.private & filters.command("mexport"))
+@check_ban
+async def mexport_cmd(client: Client, message):
+    uid = message.from_user.id
+    from cantarella.core.database import db
+    subs = await db.get_manga_subs(uid)
+    if not subs:
+        return await message.reply(
+            "<blockquote>📭 ɴᴏᴛʜɪɴɢ ᴛᴏ ᴇxᴘᴏʀᴛ — /msubscribe ꜰɪʀꜱᴛ.</blockquote>",
+            parse_mode=ParseMode.HTML)
+    payload = {"animedl_msubs": 1, "subs": [
+        {k: s.get(k) for k in ("provider", "series_id", "title",
+                               "cover", "url", "last_chapter")}
+        for s in subs]}
+    import io
+    doc = io.BytesIO(json.dumps(payload, indent=1).encode())
+    doc.name = "animedl_msubs.json"
+    await message.reply_document(doc,
+        caption=f"<blockquote>📤 {len(subs)} ꜰᴏʟʟᴏᴡꜱ ᴇxᴘᴏʀᴛᴇᴅ — ʀᴇᴘʟʏ ᴛᴏ ᴛʜɪꜱ ꜰɪʟᴇ ᴡɪᴛʜ /mimport ᴛᴏ ʀᴇꜱᴛᴏʀᴇ.</blockquote>",
+        parse_mode=ParseMode.HTML)
+
+
+@Client.on_message(filters.private & filters.command("mimport"))
+@check_ban
+async def mimport_cmd(client: Client, message):
+    uid = message.from_user.id
+    if not (message.reply_to_message and message.reply_to_message.document):
+        return await message.reply(
+            "<blockquote>ʀᴇᴘʟʏ ᴛᴏ ʏᴏᴜʀ /mexport ꜰɪʟᴇ ᴡɪᴛʜ <code>/mimport</code>.</blockquote>",
+            parse_mode=ParseMode.HTML)
+    path = None
+    try:
+        path = await message.reply_to_message.download()
+        data = json.loads(open(path, "rb").read())
+    except Exception as e:
+        return await message.reply(
+            f"<blockquote>❌ ʙᴀᴅ ꜰɪʟᴇ: {str(e)[:80]}</blockquote>",
+            parse_mode=ParseMode.HTML)
+    finally:
+        import os as _os
+        try:
+            path and _os.remove(path)
+        except Exception:
+            pass
+    if not isinstance(data, dict) or not data.get("animedl_msubs"):
+        return await message.reply(
+            "<blockquote>❌ ᴛʜᴀᴛ'ꜱ ɴᴏᴛ ᴀɴ ᴀɴɪᴍᴇᴅʟ ꜰᴏʟʟᴏᴡꜱ ʙᴀᴄᴋᴜᴘ.</blockquote>",
+            parse_mode=ParseMode.HTML)
+    from cantarella.core.database import db
+    added = dup = 0
+    for s in (data.get("subs") or [])[:100]:
+        if not s.get("provider") or not s.get("series_id"):
+            continue
+        saved = await db.add_manga_sub(
+            uid=uid, provider=s["provider"], series_id=s["series_id"],
+            title=s.get("title") or "?", cover=s.get("cover") or "",
+            url=s.get("url") or "",
+            last_chapter=s.get("last_chapter") or "0")
+        if saved and not saved.get("added"):   # existing doc → duplicate
+            dup += 1
+        else:
+            added += 1
+    await message.reply(
+        f"<blockquote>📥 ɪᴍᴘᴏʀᴛᴇᴅ: +{added} ɴᴇᴡ · {dup} ᴀʟʀᴇᴀᴅʏ ꜰᴏʟʟᴏᴡᴇᴅ — /msubs</blockquote>",
+        parse_mode=ParseMode.HTML)
 
 
 # ─────────────────────────────────────────────
 #  background loop (started from main.py)
 # ─────────────────────────────────────────────
 async def sub_check_loop(app):
-    """Periodic follow-scan for every user; announces new chapters in DM."""
+    """Periodic follow-scan; respects each user's /minterval and mirrors
+    update cards into their /mchannel when set."""
     await asyncio.sleep(90)                    # let the bot settle
     from cantarella.core.database import db
     while True:
@@ -307,23 +495,45 @@ async def sub_check_loop(app):
             by_uid = {}
             for s in subs:
                 by_uid.setdefault(s.get("uid"), []).append(s)
+            now = int(time.time())
             for uid, u_subs in by_uid.items():
+                interval = await _user_interval(uid)
                 try:
+                    last = int(await db.get_user_setting(uid, "last_scan", 0) or 0)
+                except Exception:
+                    last = 0
+                if now - last < interval * 60:
+                    continue                   # not due yet
+                try:
+                    await db.set_user_setting(uid, "last_scan", now)
                     updates = await check_subs(uid)
                 except Exception as e:         # noqa: BLE001
                     logger.info("sub loop user %s failed: %s", uid, e)
                     continue
                 if not updates:
                     continue
+                header = f"🔔 {len(updates)} ꜰᴏʟʟᴏᴡᴇᴅ ꜱᴇʀɪᴇꜱ ᴊᴜꜱᴛ ᴜᴘᴅᴀᴛᴇᴅ!"
+                await deliver_updates(app, uid, updates, header)
+                # optional update channel
                 try:
-                    text, markup = _update_card(
-                        uid, updates,
-                        f"🔔 {len(updates)} ꜰᴏʟʟᴏᴡᴇᴅ ꜱᴇʀɪᴇꜱ ᴊᴜꜱᴛ ᴜᴘᴅᴀᴛᴇᴅ!")
-                    await app.send_message(uid, text, reply_markup=markup,
-                                           parse_mode=ParseMode.HTML)
-                except Exception as e:         # noqa: BLE001 — user blocked bot
-                    logger.info("notify %s failed: %s", uid, e)
+                    chan = await db.get_user_setting(uid, "mchannel", None)
+                    if chan:
+                        cap, mk = _update_card(uid, updates, header)
+                        target = int(chan) if str(chan).lstrip("-").isdigit() else chan
+                        try:
+                            await app.send_photo(
+                                target, next((s.get("cover") for s, _ in updates
+                                              if s.get("cover")), ""),
+                                caption=cap, reply_markup=mk) if any(
+                                s.get("cover") for s, _ in updates) else \
+                                await app.send_message(target, cap,
+                                                       reply_markup=mk,
+                                                       parse_mode=ParseMode.HTML)
+                        except Exception as e:  # noqa: BLE001 — can't post
+                            logger.info("channel %s post failed: %s", chan, e)
+                except Exception:
+                    pass
                 await asyncio.sleep(2)
         except Exception as e:                 # noqa: BLE001 — never die
             logger.warning("sub_check_loop cycle failed: %s", e)
-        await asyncio.sleep(_interval_minutes() * 60)
+        await asyncio.sleep(min(15, _interval_minutes()) * 60)

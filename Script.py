@@ -32,7 +32,7 @@ Hᴇʟʟᴏ {mention}, ʜᴇʀᴇ ᴀʀᴇ ᴍʏ ғᴇᴀᴛᴜʀᴇs ᴀɴᴅ �
 <b>📖 Mᴀɴɢᴀ / Mᴀɴʜᴡᴀ:</b>
 <blockquote><b>✦ /manga &lt;ɴᴀᴍᴇ&gt; — ꜱᴇᴀʀᴄʜ 12 ꜱᴏᴜʀᴄᴇꜱ (ᴍᴀɴɢᴀᴅᴇx · ᴄᴏᴍɪᴄᴋ · ᴀꜱᴜʀᴀ · ᴡᴇᴇʙᴄᴇɴᴛʀᴀʟ + ᴍᴏʀᴇ).
 ✦ ᴘɪᴄᴋ ᴀ ꜱᴇʀɪᴇꜱ → ᴛᴀᴘ ᴀ ᴄʜᴀᴘᴛᴇʀ → ɢᴇᴛ 📄 ᴘᴅꜰ ᴏʀ 📚 ᴄʙᴢ.
-✦ /msubscribe — ꜰᴏʟʟᴏᴡ ᴀ ꜱᴇʀɪᴇꜱ; ɢᴇᴛ ᴘɪɴɢᴇᴅ ᴏɴ ɴᴇᴡ ᴄʜᴀᴘᴛᴇʀꜱ (/msubs /munsub /mcheck).
+✦ /msubscribe — ꜰᴏʟʟᴏᴡ ꜱᴇʀɪᴇꜱ; ᴘɪɴɢꜱ ᴏɴ ɴᴇᴡ ᴄʜᴀᴘᴛᴇʀꜱ (/msubs /mcheck /minterval /mchannel /mexport).
 ✦ /msearch · /minfo · /mqueue · /mclean · /mrefresh · /mpost — ꜰᴜʟʟ ᴍᴀɴɢᴀ ʙᴏᴛ.
 ✦ /usettings — ꜰᴏʀᴍᴀᴛ + 18+ ᴘʀᴇꜰᴇʀᴇɴᴄᴇꜱ · /premium — 💎 ɪɴꜰᴏ (18+ ꜱᴏᴜʀᴄᴇꜱ).</b></blockquote>"""
 

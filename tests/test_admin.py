@@ -178,7 +178,7 @@ print("— registry invariants")
 import manga_sources as MS
 ok("NSFW_IDS exported", MS.NSFW_IDS == ("manhwaclan", "manga18fx", "manhwa18"))
 ok("NSFW not in default order", all(p not in MS.SEARCH_ORDER for p in MS.NSFW_IDS))
-ok("VERSION == 4.23.0", __import__("config").VERSION == "5.2.0")
+ok("VERSION == 4.23.0", __import__("config").VERSION == "5.3.0")
 help_src = Path("Script.py").read_text()
 ok("help mentions /usettings + /premium", "/usettings" in help_src and "/premium" in help_src)
 

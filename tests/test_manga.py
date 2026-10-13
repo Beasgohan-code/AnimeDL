@@ -326,7 +326,7 @@ ok("no third-party branding",
    not any(b in plug.lower() for b in ("codeflix", "abhinai", "dra-sama")))
 ok("help mentions /manga", "/manga" in Path(ROOT, "Script.py").read_text())
 from config import VERSION
-ok("VERSION == 4.22.0", VERSION == "5.2.0", VERSION)
+ok("VERSION == 4.22.0", VERSION == "5.3.0", VERSION)
 
 # ══ 11. LIVE probes (best-effort) ═══════════════════════════════════════════
 print("— live probes (best-effort)")
@@ -941,6 +941,160 @@ ok("menu registers tracker",
    all(c in Path("cantarella/telegram/utils.py").read_text()
        for c in ("msubscribe", "msubs", "munsub", "mcheck")))
 _cdb20.db = _real_db20
+
+
+# ══ 18. v5.3.0 — caches, per-user interval, channel, export/import, cards ═══
+print("— v5.3.0 tracker features (repo-inspired: interval/channel/thumb/export)")
+import time as _t53
+
+# a) search cache: same query twice → provider hit once
+_calls53 = {"n": 0}
+class _CountProv:
+    def search(self, q):
+        _calls53["n"] += 1
+        return [MS.MangaSearchResult(provider="mangadex", id="c1",
+                                     title="Cached Toon")]
+import os as _os53
+_real_gp53 = MS.get_provider
+_old_ttl = _os53.environ.get("MANGA_CACHE_TTL")
+_os53.environ["MANGA_CACHE_TTL"] = "600"
+MS.get_provider = lambda pid: _CountProv()
+r_a, _ = MS.search_all("cache probe", providers=("mangadex",))
+r_b, _ = MS.search_all("cache probe", providers=("mangadex",))
+ok("search cache: 2 calls → 1 upstream hit", _calls53["n"] == 1 and len(r_b) == 1)
+_os53.environ["MANGA_CACHE_TTL"] = "0"
+MS._SEARCH_CACHE.clear()
+MS.search_all("cache probe", providers=("mangadex",))
+ok("TTL=0 disables cache", _calls53["n"] == 2)
+if _old_ttl is not None:
+    _os53.environ["MANGA_CACHE_TTL"] = _old_ttl
+else:
+    _os53.environ.pop("MANGA_CACHE_TTL", None)
+MS.get_provider = _real_gp53
+
+# b) chapters cache inside the external adapter
+class _FakeScraper:
+    def __init__(self):
+        self.ch_calls = 0
+    async def search(self, q):
+        return [{"title": "Ext Toon", "url": "https://ext/x",
+                 "poster": "https://ext/c.jpg"}]
+    async def get_chapters(self, data):
+        self.ch_calls += 1
+        data["chapters"] = [{"title": "Chapter 5", "url": "https://ext/x/5",
+                             "chapter": "5"}]
+        return data
+    def iter_chapters(self, data):
+        return data["chapters"]
+    async def get_pictures(self, chap, url=None):
+        return ["https://ext/p1.jpg"]
+import manga_sources.external as _ext53
+_p53 = _ext53.ExternalProvider(_FakeScraper, "extfake", "ExtFake")
+found = _p53.search("ext")
+chs1 = _p53.chapters("https://ext/x")
+chs2 = _p53.chapters("https://ext/x")
+ok("external adapter search→chapters",
+   len(found) == 1 and [c.number for c in chs1] == ["5"])
+ok("external chapters cache: 2 calls → 1 upstream",
+   _p53.inst.ch_calls == 1 and [c.number for c in chs2] == ["5"])
+urls, ref = _p53.images(chs1[0])
+ok("external get_pictures bridged", urls == ["https://ext/p1.jpg"])
+
+# c) per-user interval
+import cantarella.telegram.plugins.mtracker as _mt
+class _SetDB:
+    def __init__(self):
+        self.s = {}
+    async def get_user_setting(self, uid, key, default=None):
+        return self.s.get(key, default)
+    async def set_user_setting(self, uid, key, value):
+        self.s[key] = value
+import cantarella.core.database as _cdb53
+_real_db53 = _cdb53.db
+_cdb53.db = _SetDB()
+_loop53 = _aio.new_event_loop(); _aio.set_event_loop(_loop53)
+ok("interval default = env 30", _loop53.run_until_complete(_mt._user_interval(9)) == 30)
+_loop53.run_until_complete(_cdb53.db.set_user_setting(9, "minterval", 15))
+ok("interval per-user override", _loop53.run_until_complete(_mt._user_interval(9)) == 15)
+_loop53.run_until_complete(_cdb53.db.set_user_setting(9, "minterval", 99999))
+ok("interval clamped to 720", _loop53.run_until_complete(_mt._user_interval(9)) == 720)
+_cdb53.db = _real_db53
+
+# d) photo-card delivery: cover → reply_photo; no cover → text fallback
+class _Dest:
+    def __init__(self, fail_photo=False):
+        self.fail_photo = fail_photo
+        self.got = {}
+    async def reply_photo(self, photo, caption=None, reply_markup=None, **k):
+        if self.fail_photo:
+            raise RuntimeError("cdn blocked")
+        self.got = {"kind": "photo", "photo": photo, "caption": caption}
+        return self
+    async def reply_text(self, text, reply_markup=None, **k):
+        self.got = {"kind": "text", "text": text}
+        return self
+_sub53 = {"provider": "mangadex", "title": "Cover Toon",
+          "series_id": "sid", "cover": "https://cv/x.jpg", "url": "u",
+          "last_chapter": "3"}
+_ch53 = MangaChapter(id="n", number="9", title="")
+_d53 = _Dest()
+_loop53.run_until_complete(_mt.deliver_updates(_d53, 1, [(_sub53, _ch53)], "h"))
+ok("photo card uses series cover",
+   _d53.got.get("kind") == "photo" and _d53.got["photo"] == "https://cv/x.jpg"
+   and "ᴄʜᴀᴘᴛᴇʀ <b>9</b>" in (_d53.got.get("caption") or ""))
+_d53b = _Dest(fail_photo=True)
+_loop53.run_until_complete(_mt.deliver_updates(_d53b, 1, [(_sub53, _ch53)], "h"))
+ok("photo failure falls back to text card", _d53b.got.get("kind") == "text")
+_sub53nc = dict(_sub53, cover="")
+_d53c = _Dest()
+_loop53.run_until_complete(_mt.deliver_updates(_d53c, 1, [(_sub53nc, _ch53)], "h"))
+ok("no cover → straight text card", _d53c.got.get("kind") == "text")
+
+# e) export payload round-trip (the exact shape /mexport writes)
+subs53 = [_sub53]
+payload = {"animedl_msubs": 1, "subs": [
+    {k: s.get(k) for k in ("provider", "series_id", "title",
+                           "cover", "url", "last_chapter")}
+    for s in subs53]}
+blob = json.loads(json.dumps(payload))
+ok("export payload round-trips",
+   blob["animedl_msubs"] == 1 and blob["subs"][0]["series_id"] == "sid"
+   and blob["subs"][0]["last_chapter"] == "3")
+
+# f) registration + no duplicates + menu
+def _cmd_names53(obj, seen=None):
+    seen = seen or set()
+    if id(obj) in seen:
+        return set()
+    seen.add(id(obj))
+    out = set()
+    v = getattr(obj, "commands", None)
+    if v:
+        out.update(v)
+    for attr in ("filters", "parent", "base", "other"):
+        v = getattr(obj, attr, None)
+        if isinstance(v, (list, tuple)):
+            for s in v:
+                out |= _cmd_names53(s, seen)
+        elif v is not None and hasattr(v, "__dict__"):
+            out |= _cmd_names53(v, seen)
+    return out
+mt53 = set()
+for h in _mt.__dict__.values():
+    if hasattr(h, "handlers"):
+        for h2, _ in h.handlers:
+            f = getattr(h2, "filters", None)
+            if f is not None:
+                mt53 |= _cmd_names53(f)
+for c in ("msubscribe", "msubs", "munsub", "mcheck", "minterval",
+          "mchannel", "mexport", "mimport"):
+    ok(f"/{c} registered", c in mt53, str(sorted(mt53)))
+ok("no dup of existing commands",
+   not mt53 & {"settings", "usettings", "export", "import", "queue"})
+ok("menu registers v5.3 tracker commands",
+   all(c in Path("cantarella/telegram/utils.py").read_text()
+       for c in ("minterval", "mchannel", "mexport", "mimport")))
+ok("VERSION == 5.3.0", __import__("config").VERSION == "5.3.0")
 
 n_fail = sum(1 for _, c in PASS if not c)
 print(f"\n═══ test_manga: {len(PASS) - n_fail}/{len(PASS)} passed ═══")

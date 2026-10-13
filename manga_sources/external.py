@@ -39,6 +39,7 @@ class ExternalProvider:
         self._inst = None
         self._series_cache = {}     # series url -> their search-result dict
         self._chapter_cache = {}    # chapter url -> their chapter dict
+        self._chapters_cache = {}   # series url -> (ts, [MangaChapter])
 
     # ── plumbing ─────────────────────────────────────────────
     @property
@@ -77,6 +78,17 @@ class ExternalProvider:
         return out
 
     def chapters(self, series_url: str, lang: str = "en") -> list:
+        # TTL cache — the tracker polls this every cycle; 10 min default
+        import os
+        import time as _t
+        try:
+            ttl = max(0, int(os.getenv("MANGA_CACHE_TTL", "600") or "600"))
+        except ValueError:
+            ttl = 600
+        if ttl:
+            hit = self._chapters_cache.get(series_url)
+            if hit and _t.time() - hit[0] < ttl:
+                return list(hit[1])
         data = self._series_cache.get(series_url) or {
             "title": series_url.rsplit("/", 1)[-1] or series_url,
             "url": series_url,
@@ -109,6 +121,8 @@ class ExternalProvider:
             ))
         if not out:
             raise MangaError(f"{self._name}: no chapters parsed")
+        if ttl:
+            self._chapters_cache[series_url] = (_t.time(), list(out))
         return out
 
     def images(self, chapter: MangaChapter) -> tuple:

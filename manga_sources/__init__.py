@@ -218,6 +218,20 @@ CHAPTERS_ARG = {
 }
 
 
+# TTL cache for provider searches (same query twice → instant, fewer hits
+# on the sources). Controlled by MANGA_CACHE_TTL (seconds, 0 disables).
+import time as _time
+_SEARCH_CACHE = {}
+
+
+def _cache_ttl() -> int:
+    import os
+    try:
+        return max(0, int(os.getenv("MANGA_CACHE_TTL", "600") or "600"))
+    except ValueError:
+        return 600
+
+
 def search_all(query: str, per_provider: int = 6, nsfw: bool = False,
                providers: tuple = None) -> tuple:
     """Search providers IN PARALLEL (8 workers); returns (results, tried)
@@ -231,10 +245,20 @@ def search_all(query: str, per_provider: int = 6, nsfw: bool = False,
     pids = tuple(providers) if providers else _search_order(nsfw)
     results, tried = [], []
 
+    ttl = _cache_ttl()
+    qkey = query.strip().lower()
+
     def _one(pid):
+        key = (pid, qkey)
+        if ttl:
+            hit = _SEARCH_CACHE.get(key)
+            if hit and _time.time() - hit[0] < ttl:
+                return pid, len(hit[1]), list(hit[1])
         try:
             prov = get_provider(pid)
             found = prov.search(query)[:per_provider]
+            if ttl and found:
+                _SEARCH_CACHE[key] = (_time.time(), list(found))
             return pid, len(found), found
         except Exception as e:  # noqa: BLE001 — one dead source ≠ dead search
             logger.info("manga search on %s failed: %s", pid, e)
