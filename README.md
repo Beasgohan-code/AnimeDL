@@ -1,6 +1,6 @@
-# AnimeDL 📺⬇️
+# AnimeDL ULTRA 📺⬇️⚡
 
-**An all-in-one Telegram bot: advanced anime downloader + universal file leecher, in a single process.**
+**The ultra all-in-one Telegram bot: advanced anime downloader + universal file leecher, in a single process.**
 
 AnimeDL merges a full anime search & download engine (search, multi-quality episodes, batch downloads, airing scheduler) with a powerful leech engine that can pull files from dozens of sources — direct links, MediaFire, PixelDrain, Gofile, Terabox, Mega, Streamtape, catbox, galleries, torrents/magnets, YouTube & 1000+ yt-dlp sites — and upload them straight to Telegram or mirror them to Google Drive.
 

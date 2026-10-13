@@ -323,7 +323,7 @@ def main():
     import time as _time
     _t0 = _time.time()
     logger.warning(
-        "🟢 START AnimeDL v%s — pid=%s port=%s work=%s",
+        "🟢 START AnimeDL ULTRA v%s — pid=%s port=%s work=%s",
         config.VERSION, _os.getpid(), _os.environ.get("PORT", "8080"),
         str(config.WORK_PATH),
     )
