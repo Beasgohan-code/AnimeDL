@@ -291,12 +291,16 @@ import manga_sources as MS
 real_gp = MS.get_provider
 class Boom:
     def search(self, q): raise RuntimeError("down")
-MS.get_provider = lambda pid: Boom() if pid == "comick" else real_gp(pid)
+class _GoodProv:
+    def search(self, q):
+        return [MS.MangaSearchResult(provider="mangadex", id="x",
+                                     title="Stub Toon")]
+MS.get_provider = lambda pid: Boom() if pid == "comick" else _GoodProv()
 results, tried = MS.search_all("solo")
 MS.get_provider = real_gp
 ok("one dead provider ≠ dead search", len(results) >= 1
    and any(pid == "comick" and isinstance(o, str) for pid, o in tried), str(tried))
-ok("12 default providers registered", len(MS.SEARCH_ORDER) == 12, str(MS.SEARCH_ORDER))
+ok("37 SFW sources in default order", len(MS.SEARCH_ORDER) == 37, str(len(MS.SEARCH_ORDER)))
 ok("CHAPTERS_ARG covers defaults", all(p in MS.CHAPTERS_ARG for p in MS.SEARCH_ORDER))
 ok("NSFW locked by default",
    all(pid not in ("manhwaclan", "manga18fx", "manhwa18") for pid, _ in tried))
@@ -322,7 +326,7 @@ ok("no third-party branding",
    not any(b in plug.lower() for b in ("codeflix", "abhinai", "dra-sama")))
 ok("help mentions /manga", "/manga" in Path(ROOT, "Script.py").read_text())
 from config import VERSION
-ok("VERSION == 4.22.0", VERSION == "5.1.0", VERSION)
+ok("VERSION == 4.22.0", VERSION == "5.2.0", VERSION)
 
 # ══ 11. LIVE probes (best-effort) ═══════════════════════════════════════════
 print("— live probes (best-effort)")
@@ -395,7 +399,7 @@ mbd = more.MangabuddyProvider()
 MBD_SEARCH = ('<div class="book-item"><a href="/manga/solo-bug"><img data-src="https://img.mb/s.jpg" alt="Solo Bug"/></a></div>')
 more.http_get = lambda url, headers=None: type("R", (), {"text": MBD_SEARCH, "status_code": 200})()
 s = mbd.search("solo")
-ok("mangabuddy search", len(s) == 1 and s[0].url.endswith("/manga/solo-bug")
+ok("mangabuddy search (first-party)", len(s) == 1 and s[0].url.endswith("/manga/solo-bug")
    and s[0].title == "Solo Bug", str(s)[:80])
 MBD_CH = '<ul id="chapter-list"><li><a href="/manga/solo-bug/chapter-9"><strong class="chapter-title">Chapter 9</strong></a></li></ul>'
 more.http_get = lambda url, headers=None: type("R", (), {"text": MBD_CH, "status_code": 200})()
@@ -420,9 +424,9 @@ more.http_get = lambda url, headers=None: type("R", (), {"text": PAGES[1] if url
 urls, ref = nmn.images(chs[0])
 ok("ninemanga multi-page reader", urls == ["https://pic.nm/1.jpg", "https://pic.nm/2.jpg"], str(urls))
 
-ok("CHAPTERS_ARG covers new providers",
-   all(p in MS.CHAPTERS_ARG for p in ("mangakakalot", "mangasee", "mangabuddy", "ninemanga")))
-ok("15 providers registered", len(MS.PROVIDER_NAMES) == 15, str(len(MS.PROVIDER_NAMES)))
+ok("CHAPTERS_ARG covers registry",
+   all(p in MS.CHAPTERS_ARG for p in MS.SEARCH_ORDER))
+ok("40 providers registered", len(MS.PROVIDER_NAMES) == 40, str(len(MS.PROVIDER_NAMES)))
 
 # ══ 13. NSFW premium gating (search flag + plugin guards) ═══════════════════
 print("— NSFW premium gating")
@@ -570,8 +574,8 @@ finally:
 # e) UI: _render_results builds the richgram card (health bar + chips + pages)
 print("— richgram-style results renderer")
 import cantarella.telegram.plugins.manga as _mp
-ok("provider badges cover registry",
-   all(p in _mp._BADGES for p in MS.SEARCH_ORDER), str(MS.SEARCH_ORDER))
+ok("badges unique across registry",
+   len({_mp._badge(p) for p in MS.SEARCH_ORDER}) == len(MS.SEARCH_ORDER))
 
 class _FakeMsg:
     def __init__(self):

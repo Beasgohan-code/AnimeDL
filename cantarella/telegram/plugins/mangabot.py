@@ -36,10 +36,9 @@ from cantarella.telegram.plugins.manga import (
 
 logger = logging.getLogger(__name__)
 
-_SFW = ("mangadex", "comick", "asura", "weebcentral", "mgeko", "manhuafast",
-        "manhuaplus", "templetoons", "mangakakalot", "mangasee",
-        "mangabuddy", "ninemanga")
-_NSFW = ("manhwaclan", "manga18fx", "manhwa18")
+import manga_sources as _MS
+_SFW = tuple(_MS.SEARCH_ORDER)                 # 37 SFW sources (repo scrapers first)
+_NSFW = tuple(_MS.NSFW_IDS)                    # 18+: manhwaclan · manga18fx · manhwa18
 
 
 def _src_line() -> str:

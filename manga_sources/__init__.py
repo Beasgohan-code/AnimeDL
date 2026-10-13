@@ -40,6 +40,24 @@ class MangaChapter:
 
 
 def get_provider(pid: str):
+    # 18+ gate first (public bot): manhwaclan exists in BOTH layers;
+    # manga18fx / manhwa18 are first-party only.
+    nsfw_only = pid in ("manhwaclan", "manga18fx", "manhwa18")
+    if nsfw_only:
+        from manga_sources.nsfw import nsfw_enabled
+        if not nsfw_enabled():
+            raise MangaError(f"provider {pid} is 18+ locked (env off)")
+    # vendored scrapers FIRST (sources/scrapers — the primary layer);
+    # first-party code below is the fallback / covers what the repo doesn't.
+    if pid in _EXTERNAL_IDS:
+        try:
+            from manga_sources.external import EXTERNAL_PROVIDERS
+            return EXTERNAL_PROVIDERS[pid]()
+        except Exception as e:            # noqa: BLE001 — first-party fallback
+            logger.warning("external %s failed, falling back: %s", pid, e)
+            if pid == "manhwaclan":
+                from manga_sources import nsfw as _nsfw
+                return _nsfw.NSFW_PROVIDERS[pid]()
     if pid == "mangadex":
         from manga_sources.mangadex import MangaDexProvider
         return MangaDexProvider()
@@ -76,12 +94,9 @@ def get_provider(pid: str):
     if pid == "ninemanga":
         from manga_sources.more import NinemangaProvider
         return NinemangaProvider()
-    if pid in ("manhwaclan", "manga18fx", "manhwa18"):
-        # 18+ sources: only when the operator opts in via env (public bot)
-        from manga_sources.nsfw import nsfw_enabled
-        if nsfw_enabled():
-            from manga_sources import nsfw as _nsfw
-            return _nsfw.NSFW_PROVIDERS[pid]()
+    if nsfw_only:
+        from manga_sources import nsfw as _nsfw
+        return _nsfw.NSFW_PROVIDERS[pid]()
     raise MangaError(f"unknown manga provider {pid}")
 
 
@@ -107,10 +122,73 @@ PROVIDER_NAMES = {
 # via env AND the requesting user holds premium)
 NSFW_IDS = ("manhwaclan", "manga18fx", "manhwa18")
 
-# default search order (SFW sources first; 18+ appended only when enabled)
-SEARCH_ORDER = ("mangadex", "comick", "asura", "weebcentral", "mgeko",
-                "manhuafast", "manhuaplus", "templetoons",
-                "mangakakalot", "mangasee", "mangabuddy", "ninemanga")
+# ── external (vendored sources/scrapers) registry ──────────────────────
+# class name in sources/scrapers → (provider id, display name)
+_EXTERNAL_MAP = {
+    "AllMangaWebs": ("allmanga", "AllManga"),
+    "AquaReaderWebs": ("aquareader", "AquaReader"),
+    "AtsumaruWebs": ("atsumaru", "Atsumaru"),
+    "BatotoWebs": ("batoto", "Bato.to"),
+    "DemonicScansWebs": ("demonicscans", "DemonicScans"),
+    "FlameComicsWebs": ("flamecomics", "FlameComics"),
+    "HiveToonsWebs": ("hivetoons", "HiveToons"),
+    "KaliScansWebs": ("kaliscans", "KaliScans"),
+    "KingofShojoWebs": ("kingofshojo", "KingofShojo"),
+    "LikeMangaWebs": ("likemanga", "LikeManga"),
+    "LunatoonsWebs": ("lunatoons", "Lunatoons"),
+    "MangaBallWebs": ("mangaball", "MangaBall"),
+    "MangaCloudWebs": ("mangacloud", "MangaCloud"),
+    "ManhaDNAWebs": ("mangadna", "MangaDNA"),
+    "MangaKatanaWebs": ("mangakatana", "MangaKatana"),
+    "MangaMobWebs": ("mangamob", "MangaMob"),
+    "MangaParkWebs": ("mangapark", "MangaPark"),
+    "ManhuaPlusComWebs": ("manhuapluscom", "ManhuaPlus.com"),
+    "ManhuaTopWebs": ("manhuatop", "ManhuaTop"),
+    "ManhuaUSWebs": ("manhuaus", "ManhuaUS"),
+    "ManhwaTopWebs": ("manhwatop", "ManhwaTop"),
+    "ResetScansWebs": ("resetscans", "ResetScans"),
+    "TaaddWebs": ("taadd", "Taadd"),
+    "ThunderScansWebs": ("thunderscans", "ThunderScans"),
+    "VortexScansWebs": ("vortexscans", "VortexScans"),
+    "AsuraScansWebs": ("asura", "Asura Scans"),
+    "ComickWebs": ("comick", "Comick"),
+    "WeebCentralWebs": ("weebcentral", "WeebCentral"),
+    "MgekoWebs": ("mgeko", "Mgeko"),
+    "ManhuaFastWebs": ("manhuafast", "ManhuaFast"),
+    "ManhuaplusWebs": ("manhuaplus", "ManhuaPlus"),
+    "TempleToonsWebs": ("templetoons", "TempleToons"),
+    "MangaBuddyWebs": ("mangabuddy", "Mangabuddy"),
+    "MangaKakalotGGWebs": ("mangakakalot", "MangaKakalot"),
+    "ManhwaClanWebs": ("manhwaclan", "ManhwaClan"),
+}
+_EXTERNAL_IDS = tuple(pid for pid, _ in _EXTERNAL_MAP.values())
+
+
+def _load_external_names():
+    """extend PROVIDER_NAMES with the vendored scrapers (idempotent)."""
+    for cls_name, (pid, name) in _EXTERNAL_MAP.items():
+        PROVIDER_NAMES.setdefault(pid, name)
+    for pid, name in _EXTERNAL_MAP.values():
+        CHAPTERS_ARG.setdefault(pid, "url")
+
+
+
+# default /manga search order — the repo's 34 SFW scrapers lead, backed by
+# first-party MangaDex (official API — not in the repo) + MangaSee/NineManga.
+# 18+ (manhwaclan · manga18fx · manhwa18) is appended only when enabled.
+SEARCH_ORDER = (
+    # vendored scrapers (sources/scrapers — MIT, see sources/README.md)
+    "batoto", "mangapark", "flamecomics", "weebcentral", "comick",
+    "asura", "mangakakalot", "mangabuddy", "mangakatana", "mangamob",
+    "mangaball", "mangacloud", "mangadna", "likemanga", "lunatoons",
+    "atsumaru", "aquareader", "allmanga", "mgeko", "manhuafast",
+    "manhuaplus", "manhuapluscom", "manhuatop", "manhuaus", "manhwatop",
+    "templetoons",
+    "hivetoons", "kaliscans", "kingofshojo", "demonicscans", "resetscans",
+    "thunderscans", "vortexscans", "taadd",
+    # first-party (official API / repo doesn't cover them)
+    "mangadex", "mangasee", "ninemanga",
+)
 
 
 def _search_order(nsfw: bool = False) -> tuple:
@@ -140,20 +218,34 @@ CHAPTERS_ARG = {
 }
 
 
-def search_all(query: str, per_provider: int = 6, nsfw: bool = False) -> tuple:
-    """Search every provider; returns (results, tried) where tried is
-    [(provider_id, n_or_error)] so the UI can show health per source.
-    nsfw=True additionally queries the 18+ sources (env-gated too)."""
+def search_all(query: str, per_provider: int = 6, nsfw: bool = False,
+               providers: tuple = None) -> tuple:
+    """Search providers IN PARALLEL (8 workers); returns (results, tried)
+    where tried is [(provider_id, n_or_error)] for the UI health chips.
+    nsfw=True additionally queries the 18+ sources (env-gated too).
+    providers=None → the default order (or every source when the operator
+    sets ANIMEDL_MANGA_SEARCH_ALL=1)."""
+    import os
+    from concurrent.futures import ThreadPoolExecutor
+
+    pids = tuple(providers) if providers else _search_order(nsfw)
     results, tried = [], []
-    for pid in _search_order(nsfw):
+
+    def _one(pid):
         try:
             prov = get_provider(pid)
             found = prov.search(query)[:per_provider]
-            tried.append((pid, len(found)))
-            results.extend(found)
+            return pid, len(found), found
         except Exception as e:  # noqa: BLE001 — one dead source ≠ dead search
             logger.info("manga search on %s failed: %s", pid, e)
-            tried.append((pid, f"{type(e).__name__}: {str(e)[:60]}"))
+            return pid, f"{type(e).__name__}: {str(e)[:60]}", []
+
+    order = {pid: i for i, pid in enumerate(pids)}
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for pid, outcome, found in pool.map(_one, pids):
+            tried.append((pid, outcome))
+            results.extend(found)
+    tried.sort(key=lambda t: order.get(t[0], 999))
     return results, tried
 
 
@@ -168,3 +260,5 @@ def build_output(image_paths: list, fmt: str, out_base: Path, progress=None):
 from manga_sources.base import (  # noqa: E402,F401
     fetch_images, images_to_cbz, images_to_pdf, sanitize,
 )
+
+_load_external_names()  # noqa: E402 — needs CHAPTERS_ARG above

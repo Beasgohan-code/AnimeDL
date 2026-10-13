@@ -79,6 +79,16 @@ _BADGES = {
     "mgeko": "ᴍɢ", "manhuafast": "ᴍꜰ", "manhuaplus": "ᴍᴘ", "templetoons": "ᴛᴛ",
     "mangakakalot": "ᴍᴋ", "mangasee": "ᴍꜱ", "mangabuddy": "ᴍʙ", "ninemanga": "ɴᴍ",
     "manhwaclan": "18ᴄ", "manga18fx": "18x", "manhwa18": "18",
+    # vendored scrapers (sources/scrapers)
+    "batoto": "ʙᴛᴏ", "mangapark": "ᴍᴘᴋ", "flamecomics": "ꜰʟᴍ",
+    "mangakatana": "ᴍᴋᴛ", "mangamob": "ᴍᴍᴏ", "mangaball": "ᴍʙʟ",
+    "mangacloud": "ᴍᴄʟ", "mangadna": "ᴍᴅɴᴀ", "likemanga": "ʟᴋᴍ",
+    "lunatoons": "ʟɴᴛ", "atsumaru": "ᴀᴛꜱ", "aquareader": "ᴀǫᴜ",
+    "allmanga": "ᴀʟʟ", "manhuapluscom": "ᴍᴘ+", "manhuatop": "ᴍᴛᴏ",
+    "manhuaus": "ᴍᴜꜱ", "manhwatop": "ᴍᴡᴛ", "hivetoons": "ʜɪᴠ",
+    "kaliscans": "ᴋᴀʟ", "kingofshojo": "ᴋꜱʜ", "demonicscans": "ᴅᴇᴍ",
+    "resetscans": "ʀꜱᴛ", "thunderscans": "ᴛʜᴅ", "vortexscans": "ᴠʀx",
+    "taadd": "ᴛᴀᴀ",
 }
 RES_PAGE = 8               # series results per page
 
