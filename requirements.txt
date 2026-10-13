@@ -57,3 +57,7 @@ GPUtil>=1.4.0
 #   • N_m3u8DL-RE:    bundled in binary/ (Linux x64) — run scripts/fetch_binary.py
 #                     to fetch builds for other platforms.
 libtorrent>=2.0.8
+apscheduler>=3.10.4
+reportlab>=4.0.0
+pypdf>=4.0.0
+aiofiles>=23.2.1

@@ -109,7 +109,6 @@ ok("new user not banned", nu["ban_status"]["is_banned"] is False)
 print("— handler registration")
 import cantarella.telegram.plugins.admin_cmds as ac
 import cantarella.telegram.plugins.usettings as us
-import cantarella.telegram.plugins.manga as mp
 
 def _cmd_names(obj, seen=None):
     """walk a pyrogram filter tree and collect command names."""
@@ -147,15 +146,6 @@ for c in ("ban", "unban", "banlist", "addpremium", "delpremium", "premiumlist"):
 us_cmds = _cmds(us)
 for c in ("usettings", "premium"):
     ok(f"user /{c} registered", c in us_cmds, str(sorted(us_cmds)))
-ok("manga gated by check_ban",
-   "check_ban" in (mp.manga_search_cmd.__wrapped__.__module__ if hasattr(mp.manga_search_cmd, "__wrapped__") else "")
-   or getattr(mp.manga_search_cmd, "__name__", "") != "",
-   "")
-
-# decorator chain: manga_search_cmd should carry the check_ban wrapper
-src = Path("cantarella/telegram/plugins/manga.py").read_text()
-ok("manga_search_cmd wrapped with @check_ban",
-   "@check_ban" in src.split("async def manga_search_cmd")[0].split("@Client.on_message")[-1])
 
 # ══ 4. admin target parsing ═════════════════════════════════════════════════
 print("— admin arg parsing")
@@ -175,10 +165,9 @@ ok("no target", ac._target_id(Msg(["/ban"])) == (None, ""))
 
 # ══ 5. registry invariants ══════════════════════════════════════════════════
 print("— registry invariants")
-import manga_sources as MS
-ok("NSFW_IDS exported", MS.NSFW_IDS == ("manhwaclan", "manga18fx", "manhwa18"))
-ok("NSFW not in default order", all(p not in MS.SEARCH_ORDER for p in MS.NSFW_IDS))
-ok("VERSION == 4.23.0", __import__("config").VERSION == "5.3.0")
+import mangarepo.sources as MSRC
+ok("engine sources import", hasattr(MSRC, "AsuraScansWebs"))
+ok("VERSION == 6.0.0", __import__("config").VERSION == "6.0.0")
 help_src = Path("Script.py").read_text()
 ok("help mentions /usettings + /premium", "/usettings" in help_src and "/premium" in help_src)
 

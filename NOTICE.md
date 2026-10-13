@@ -47,3 +47,10 @@ its license text is available in the distributed package.
 Both cores have been substantially modified for this project: the two bots
 were merged onto a single Pyrogram client, command/callback routing was
 de-conflicted, configuration was unified, and deployment tooling was rewritten.
+
+## mangarepo/ — manga chapter-update engine
+
+Code in `mangarepo/` (database, plugins, services, sources) is vendored from
+https://github.com/KunalG932/auto-manga-chapter-update-bot — MIT License,
+Copyright (c) 2026 @codexnano. Full license text: `mangarepo/LICENSE`.
+Vendored backend-only; user-facing branding is AnimeDL's own.

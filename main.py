@@ -64,6 +64,11 @@ import leechbot.commands  # noqa: E402,F401
 import leechbot.callbacks  # noqa: E402,F401
 import leechbot.handlers  # noqa: E402,F401
 
+# Vendored manga chapter-update engine (mangarepo/ — full external repo).
+# Handlers go on BEFORE the client starts; listener + scheduler after.
+from cantarella.telegram.mangabridge import install_manga_engine  # noqa: E402
+install_manga_engine(app)
+
 # ---------------------------------------------------------------------------
 # Health-check web server (also used by Heroku / containers)
 # ---------------------------------------------------------------------------
@@ -253,6 +258,13 @@ async def run():
     except Exception as e:
         logger.warning("RSS poller failed to start: %s", e)
 
+    # Manga engine runtime: channel listener + chapter-check scheduler
+    try:
+        from cantarella.telegram.mangabridge import start_manga_engine
+        await start_manga_engine(app)
+    except Exception as e:
+        logger.warning("manga engine runtime failed to start: %s", e)
+
     # Leech engine: web dashboard (separate port from the health server)
     try:
         import secrets
@@ -268,12 +280,7 @@ async def run():
     # Ongoing-episode auto-download scheduler (anime core)
     from cantarella.telegram.ongoing import ongoing_task
     bg_tasks = [asyncio.create_task(ongoing_task(app))]
-    try:
-        from cantarella.telegram.plugins.mtracker import sub_check_loop
-        bg_tasks.append(asyncio.create_task(sub_check_loop(app)))
-        logger.info("🔔 Manga chapter tracker started")
-    except Exception as e:
-        logger.warning("manga tracker failed to start: %s", e)
+    logger.info("📄 Manga chapter engine (mangarepo) registered")
 
     # Reliability layer: keep-alive pinger + watchdog
     import reliability

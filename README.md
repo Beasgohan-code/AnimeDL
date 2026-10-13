@@ -19,6 +19,14 @@ AnimeDL merges a full anime search & download engine (search, multi-quality epis
 | 📺 **AniWatch** (aniwatchtv.to) | built-in | original core |
 | 🛰️ **Consumet / Aniwatch-API** | optional | self-hosted REST APIs — one-line env config, containers in compose profile |
 
+### 📖 Manga chapter engine — 35 sources (vendored full bot)
+Powered by a complete vendored chapter-update engine (`mangarepo/`, MIT — see NOTICE):
+`/search <name>` sweeps all 35 sources in parallel (Asura · Comick · Batoto · WeebCentral · MangaPark + more),
+users pick a source → series → chapters, and new chapters auto-post as **PDF/CBZ** with per-user
+watermarks, promo banners, thumbnails and custom captions. Track via `/list` `/check` `/stop` `/info`,
+configure via `/msettings` (quality · interval · watermark · promos · channel link). Owner tools:
+`/dbstats` `/banned` `/deluser` `/usersettings`. Channel auto-post listener included.
+
 Switch sources in `/manage` → **Switch source**. Search results are tagged with
 their source; episode downloads flow through the same N_m3u8DL-RE + upload
 pipeline with per-provider referers.

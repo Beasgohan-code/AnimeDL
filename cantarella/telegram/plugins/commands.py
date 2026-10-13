@@ -130,6 +130,12 @@ async def handle_ongoing_schedule(client: Client, message):
 @check_ban
 @check_fsub
 async def handle_start(client: Client, message):
+    # Register the user in the manga engine's DB too (its panels read it)
+    try:
+        from cantarella.telegram.mangabridge import ensure_manga_user
+        await ensure_manga_user(message.from_user.id)
+    except Exception:
+        pass
     # Handle deep-link file retrieval (no fsub needed for file links from channel)
     if len(message.command) > 1:
         data = message.command[1]

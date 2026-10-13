@@ -1,1100 +1,259 @@
-#!/usr/bin/env python3
-"""v4.22.0 manga engine tests — 11 providers, builders, aggregation, NSFW
-gate. All provider contracts run on faked HTTP (deterministic); live probes
-are best-effort and never fail the suite."""
-import io
-import json
+# ═══════════════════════════════════════════════════════════════════════════
+# test_manga — vendored manga chapter-update engine (mangarepo/, v6.0.0)
+# The FULL external repo runs inside AnimeDL; these checks prove:
+#   vendor integrity · 35-source manager · REAL PDF/CBZ binaries · DB subs
+#   mixin logic · check-scheduler interval gating · bridge handler wiring ·
+#   zero duplicate commands · menu/help consistency.
+# No live network: scrapers are stubbed where the pipeline is exercised.
+# ═══════════════════════════════════════════════════════════════════════════
 import os
 import sys
-import threading
-import http.server
-import socketserver
+import json
+import asyncio as _aio
+import zipfile
+import tempfile
 from pathlib import Path
 
-os.environ.setdefault("API_ID", "1"); os.environ.setdefault("API_HASH", "d")
-os.environ.setdefault("BOT_TOKEN", "1:dummy"); os.environ.setdefault("OWNER_ID", "1")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
-ROOT = str(Path(__file__).resolve().parent.parent)
-sys.path.insert(0, ROOT)
-os.chdir(ROOT)
+os.environ.setdefault("API_ID", "1")
+os.environ.setdefault("API_HASH", "dummy")
+os.environ.setdefault("BOT_TOKEN", "1:dummy")
+os.environ.setdefault("OWNER_ID", "1")
 
 PASS = []
 def ok(name, cond, extra=""):
     PASS.append((name, bool(cond)))
-    print(("  ✅" if cond else "  ❌") + f" {name}" + (f" — {extra}" if extra and not cond else ""))
-
-from manga_sources import (MangaChapter, MangaError, MangaSearchResult,
-                           build_output, fetch_images, sanitize, search_all)
-from manga_sources.base import images_to_cbz, images_to_pdf
-from PIL import Image
-
-import shutil as _sh
-tmp = Path("/tmp/t_manga"); _sh.rmtree(tmp, ignore_errors=True); tmp.mkdir(parents=True)
-
-# ══ 1. builders ═════════════════════════════════════════════════════════════
-print("— PDF/CBZ builders")
-pages = []
-for i, color in enumerate([(255, 0, 0), (0, 255, 0), (0, 0, 255)]):
-    img = Image.new("RGB", (60, 80), color)
-    p = tmp / f"{i:04d}.img"
-    img.save(p, format="PNG")
-    pages.append(p)
-prog = []
-pdf = images_to_pdf(pages, tmp / "ch.pdf", progress=lambda d, t: prog.append((d, t)))
-ok("PDF built", pdf.exists() and pdf.stat().st_size > 500)
-with open(pdf, "rb") as f:
-    ok("PDF magic", f.read(5) == b"%PDF-")
-ok("PDF progress fired", bool(prog))
-import zipfile
-cbz = images_to_cbz(pages, tmp / "ch.cbz")
-with zipfile.ZipFile(cbz) as zf:
-    names = zf.namelist()
-ok("CBZ built with 3 STORED pages", len(names) == 3 and
-   zf.getinfo(names[0]).compress_type == zipfile.ZIP_STORED)
-
-# ══ 2. fetch_images (loopback + dead page) ══════════════════════════════════
-print("— fetch_images (loopback + dead page)")
-class H(http.server.BaseHTTPRequestHandler):
-    def log_message(self, *a): pass
-    def do_GET(self):
-        if self.path == "/dead":
-            self.send_error(404); return
-        buf = io.BytesIO()
-        Image.new("RGB", (40, 50), (200, 100, 50)).save(buf, format="PNG")
-        self.send_response(200)
-        self.send_header("Content-Type", "image/png")
-        self.end_headers()
-        self.wfile.write(buf.getvalue())
-srv = socketserver.TCPServer(("127.0.0.1", 0), H)
-PORT = srv.server_address[1]
-threading.Thread(target=srv.serve_forever, daemon=True).start()
-wd = tmp / "fetch"
-got = fetch_images([f"http://127.0.0.1:{PORT}/a", f"http://127.0.0.1:{PORT}/dead",
-                    f"http://127.0.0.1:{PORT}/c"], wd, progress=lambda d, t: None)
-ok("dead page skipped, good pages kept in order",
-   len(got) == 2 and got[0].name == "0000.img" and got[1].name == "0002.img",
-   str([g.name for g in got]))
-srv.shutdown()
-
-# ══ 3. MangaDex ═════════════════════════════════════════════════════════════
-print("— MangaDex provider")
-from manga_sources import mangadex as mdx
-import manga_sources.base as _msb
-def _mdx_fake_get(url, headers=None, params=None, timeout=None):
-    class _R:
-        def __init__(self, payload):
-            self._p = payload
-        def json(self):
-            return self._p
-    if url.endswith("/manga") or "/feed" in url:
-        assert params is not None, \
-            "base.http_json must forward params (v4.24.0 regression)"
-    return _R(
-    {"data": [{
-        "id": "a1b2", "attributes": {
-            "title": {"en": "Solo Leveling"},
-            "altTitles": [{"ko": "나혼자만"}], "status": "ongoing",
-            "tags": [{"attributes": {"name": {"en": "Action"}}}]},
-        "relationships": [{"type": "cover_art",
-                           "attributes": {"fileName": "cover.jpg"}}]}]}
-     if url.endswith("/manga") else
-     {"data": [
-         {"id": "ch1", "attributes": {"chapter": "110", "title": "The End", "pages": 14}},
-         {"id": "ch0", "attributes": {"chapter": "109.5", "title": "", "pages": 8}},
-         {"id": "chx", "attributes": {"chapter": "108", "title": "ext", "pages": 0}}]}
-     if "/feed" in url else
-     {"baseUrl": "https://uploads.mangadex.org",
-      "chapter": {"hash": "h1", "data": ["p1.jpg", "p2.jpg"], "dataSaver": []}})
-_real_base_get = _msb.http_get
-_msb.http_get = _mdx_fake_get
-prov = mdx.MangaDexProvider()
-res = prov.search("solo")
-ok("mangadex search shape", len(res) == 1 and res[0].title == "Solo Leveling")
-chs = prov.chapters("a1b2")
-ok("mangadex chapters (0-page external skipped)",
-   [c.number for c in chs] == ["110", "109.5"])
-urls, ref = prov.images(MangaChapter(id="ch1", number="110"))
-ok("mangadex at-home image urls", urls == [
-    "https://uploads.mangadex.org/data/h1/p1.jpg",
-    "https://uploads.mangadex.org/data/h1/p2.jpg"])
-_msb.http_get = _real_base_get
-
-# ══ 4. Comick ═══════════════════════════════════════════════════════════════
-print("— Comick provider")
-from manga_sources import comick as ck
-ckp = ck.ComickProvider()
-ckp._api_get = lambda path, params=None: (
-    [{"slug": "solo-leveling", "title": "Solo Leveling",
-      "md_covers": [{"b2key": "k1"}], "status": "ongoing"}]
-    if path == "/v1.0/search/" else
-    {"comic": {"hid": "HID9"}} if path.startswith("/comic/solo") else
-    {"chapters": [{"hid": "c1", "chap": "179", "title": "Arise"},
-                  {"hid": "c2", "chap": "178", "title": None},
-                  {"hid": "c3", "chap": "", "title": "skip me"}]})
-s = ckp.search("solo")
-ok("comick search shape", len(s) == 1 and s[0].cover.endswith("k1"))
-chs = ckp.chapters("solo-leveling")
-ok("comick chapters (dedupe + numberless skipped)",
-   [c.number for c in chs] == ["179", "178"])
-NEXT_HTML = ('<html><script id="__NEXT_DATA__" type="application/json">'
-             + json.dumps({"props": {"pageProps": {"chapter": {"md_images": [
-                 {"b2key": "img1"}, {"b2key": "img2"}]}}}})
-             + "</script></html>")
-class FakeResp:
-    text = NEXT_HTML; status_code = 200; content = NEXT_HTML.encode()
-ck.http_get = lambda url, headers=None: FakeResp()
-urls, ref = ckp.images(MangaChapter(id="c1", number="179"))
-ok("comick NEXT_DATA images", urls == [
-    "https://meo.comick.pictures/img1", "https://meo.comick.pictures/img2"])
-
-# ══ 5. Asura ════════════════════════════════════════════════════════════════
-print("— Asura provider")
-from manga_sources import asura as asr
-SEARCH_HTML = ('<a href="/series/solo-leveling-12345"><img src="https://gg.asuracomic.net/c.jpg"/>'
-               '<span>Solo Leveling</span></a>')
-asr.http_get = lambda url, headers=None: type("R", (), {"text": SEARCH_HTML, "status_code": 200})()
-ap = asr.AsuraProvider()
-s = ap.search("solo")
-ok("asura search shape", len(s) == 1 and s[0].id == "12345")
-CH_HTML = ('<a href="/series/solo-leveling-12345/chapter-180"><h3>Chapter 180</h3></a>'
-           '<a href="/series/solo-leveling-12345/chapter-179.5"><h3>Chapter 179.5</h3></a>')
-asr.http_get = lambda url, headers=None: type("R", (), {"text": CH_HTML, "status_code": 200})()
-chs = ap.chapters("https://asuracomic.net/series/solo-leveling-12345")
-ok("asura chapters incl. decimal", [c.number for c in chs] == ["180", "179.5"])
-FLIGHT = 'self.__next_f.push([1,"x \\"pages\\":[{\\"url\\":\\"https://gg.asuracomic.net/p1.webp\\"},{\\"url\\":\\"https://gg.asuracomic.net/p2.webp\\"}] y")'
-asr.http_get = lambda url, headers=None: type("R", (), {"text": FLIGHT, "status_code": 200})()
-urls, ref = ap.images(chs[0])
-ok("asura flight-data images", urls == [
-    "https://gg.asuracomic.net/p1.webp", "https://gg.asuracomic.net/p2.webp"])
-
-# ══ 6. WeebCentral ══════════════════════════════════════════════════════════
-print("— WeebCentral provider")
-from manga_sources import weebcentral as wc
-WC_SEARCH = ('<a href="https://weebcentral.com/series/01J76XY7/solo-leveling">'
-             '<img src="https://wc-cdn/c.jpg"/><div><div>Solo Leveling</div></div></a>')
-wc.http_post = lambda url, data=None, headers=None, timeout=None: (
-    type("R", (), {"text": WC_SEARCH, "status_code": 200})()
-    if data == {"text": "solo"} and url.endswith("/search/simple?location=main")
-    else (_ for _ in ()).throw(IOError("HTTP 999 unexpected POST " + url)))
-wcp = wc.WeebCentralProvider()
-s = wcp.search("solo")
-ok("weebcentral search (HTMX POST)", len(s) == 1
-   and s[0].id.startswith("https://weebcentral.com/series/"))
-wc.http_get = lambda url, headers=None: type("R", (), {"text": "", "status_code": 200})()
-WC_CH = ('<a href="https://weebcentral.com/chapters/01ABC"><span class="grow flex items-center gap-2">'
-         '<span>Chapter 180</span></span></a>'
-         '<a href="https://weebcentral.com/chapters/01ABD"><span>Chapter 179</span></a>')
-wc.http_get = lambda url, headers=None: type("R", (), {"text": WC_CH, "status_code": 200})()
-chs = wcp.chapters("https://weebcentral.com/series/01J76XY7/solo-leveling")
-ok("weebcentral chapters", [c.number for c in chs] == ["180", "179"],
-   str([c.number for c in chs]))
-WC_IMG = ('<img src="https://wc-manga-cdn/x/manga_01/001.webp"/>'
-          '<img src="https://weebcentral.com/static/images/brand.png"/>')
-wc.http_get = lambda url, headers=None: type("R", (), {"text": WC_IMG, "status_code": 200})()
-urls, ref = wcp.images(chs[0])
-ok("weebcentral images (brand filtered)",
-   urls == ["https://wc-manga-cdn/x/manga_01/001.webp"], str(urls))
-
-# ══ 7. Mgeko ════════════════════════════════════════════════════════════════
-print("— Mgeko provider")
-from manga_sources import mgeko as mg
-MG_SEARCH = ('<li><a href="https://mgeko.cc/series/solo" title="Solo Max-Level Newbie">'
-             '<img src="https://mg/c.jpg"/></a></li>')
-mg.http_get = lambda url, headers=None: type("R", (), {"text": MG_SEARCH, "status_code": 200})()
-mgp = mg.MgekoProvider()
-s = mgp.search("solo")
-ok("mgeko search", len(s) == 1 and s[0].title == "Solo Max-Level Newbie")
-MG_CH = '<div id="chpagedlist"><li><a href="https://mgeko.cc/solo-chapter-201-xyz/">c201</a></li></div>'
-mg.http_get = lambda url, headers=None: type("R", (), {"text": MG_CH, "status_code": 200})()
-chs = mgp.chapters("https://mgeko.cc/series/solo")
-ok("mgeko chapters from href", [c.number for c in chs] == ["201"])
-MG_IMG = '<div id="chapter-reader"><img src="https://mg-p/1.webp"/><img src="https://mg-p/2.webp"/></div>'
-mg.http_get = lambda url, headers=None: type("R", (), {"text": MG_IMG, "status_code": 200})()
-urls, ref = mgp.images(chs[0])
-ok("mgeko reader images", urls == ["https://mg-p/1.webp", "https://mg-p/2.webp"])
-
-# ══ 8. wp-manga family (manhuafast / manhuaplus / templetoons) ══════════════
-print("— wp-manga family")
-from manga_sources import wpmanga as wp
-import manga_sources.base as msbase
-mf = wp.ManhuaFastProvider()
-MF_SEARCH = ('<div class="c-tabs-item__content"><a href="https://manhuafast.net/manga/solo"/>'
-             '<h3>Solo Farming</h3><img data-src="https://mf/c.jpg"/></div>')
-wp.http_get = lambda url, headers=None: type("R", (), {"text": MF_SEARCH, "status_code": 200})()
-s = mf.search("solo")
-ok("manhuafast search", len(s) == 1 and s[0].title == "Solo Farming")
-MF_CH = '<a href="https://manhuafast.net/manga/solo-chapter-77/">77</a>'
-wp.http_get = lambda url, headers=None: type("R", (), {"text": MF_CH, "status_code": 200})()
-chs = mf.chapters("https://manhuafast.net/manga/solo")
-ok("manhuafast ajax chapters", [c.number for c in chs] == ["77"])
-MF_IMG = ('<div class="reading-content"><div class="page-break no-gaps">'
-          '<img data-src="https://mf/p1.jpg"/></div></div>')
-wp.http_get = lambda url, headers=None: type("R", (), {"text": MF_IMG, "status_code": 200})()
-urls, ref = mf.images(chs[0])
-ok("manhuafast reading-content images", urls == ["https://mf/p1.jpg"])
-
-mp = wp.ManhuaPlusProvider()
-MP_SEARCH = '{"list": [{"slug": "solo", "name": "Solo Bug Farmer", "cover": "/covers/s.jpg"}]}'
-class _R:
-    def __init__(self, text, code=200):
-        self.text = text; self.status_code = code
-    def json(self): return json.loads(self.text)
-_orig_get = msbase.requests.get
-_orig_post = msbase.requests.post
-msbase.requests.get = lambda *a, **k: _R(MP_SEARCH)
-msbase.requests.post = lambda *a, **k: _R(MP_SEARCH)
-s = mp.search("solo")
-msbase.requests.get = _orig_get
-msbase.requests.post = _orig_post
-ok("manhuaplus ajax search", len(s) == 1 and s[0].title == "Solo Bug Farmer"
-   and s[0].url.endswith("/manga/solo"), str(s)[:80])
-MP_CH = '<div class="bc-fff s1 r2 p-13"><a href="/manga/solo/chapter-12/">Ch 12</a></div>'
-wp.http_get = lambda url, headers=None: type("R", (), {"text": MP_CH, "status_code": 200})()
-chs = mp.chapters("https://manhuaplus.org/manga/solo")
-ok("manhuaplus chapters", [c.number for c in chs] == ["12"])
-class _MPRead:
-    text = "const CHAPTER_ID = 4567;"; status_code = 200
-MP_IMG_HTML = "<img src=" + chr(39) + "https://mp/p1.webp" + chr(39) + ">"
-MP_IMG_JSON = json.dumps({"html": MP_IMG_HTML})
-wp.http_get = lambda url, headers=None: _MPRead()
-msbase.requests.get = lambda *a, **k: _R(MP_IMG_JSON)
-msbase.requests.post = lambda *a, **k: _R(MP_IMG_JSON)
-try:
-    urls, ref = mp.images(chs[0])
-    ok("manhuaplus ajax image list", urls == ["https://mp/p1.webp"], str(urls))
-except Exception as e:
-    ok("manhuaplus ajax image list", False, f"{type(e).__name__}: {e}")
-msbase.requests.get = _orig_get
-msbase.requests.post = _orig_post
-
-tt = wp.TempleToonsProvider()
-_real_wp_json, _real_wp_get = wp.http_json, wp.http_get
-wp.http_json = lambda url: [{"title": "Toon World", "series_slug": "toon-world",
-                             "thumbnail": "https://tt/c.jpg"}]
-s = tt.search("toon")
-ok("templetoons api search", len(s) == 1
-   and s[0].url == "https://templetoons.com/comic/toon-world")
-TT_CH = '<a href="/comic/toon-world/chapter-31"><h1>Chapter 31</h1></a>'
-wp.http_get = lambda url, headers=None: type("R", (), {"text": TT_CH, "status_code": 200})()
-chs = tt.chapters("https://templetoons.com/comic/toon-world")
-ok("templetoons chapters", [c.number for c in chs] == ["31"]
-   and chs[0].url.endswith("/comic/toon-world/chapter-31"))
-TT_READ = r'self.__next_f.push([1,"images\":\[\"https:\/\/cdn.toon\/images\/p1.jpg\"'
-wp.http_get = lambda url, headers=None: type("R", (), {"text": TT_READ, "status_code": 200})()
-urls, ref = tt.images(chs[0])
-ok("templetoons flight-data images", urls == ["https://cdn.toon/images/p1.jpg"], str(urls))
-wp.http_json, wp.http_get = _real_wp_json, _real_wp_get
-
-# ══ 9. aggregation + NSFW gate + registry ═══════════════════════════════════
-print("— aggregation, NSFW gate, registry")
-import manga_sources as MS
-real_gp = MS.get_provider
-class Boom:
-    def search(self, q): raise RuntimeError("down")
-class _GoodProv:
-    def search(self, q):
-        return [MS.MangaSearchResult(provider="mangadex", id="x",
-                                     title="Stub Toon")]
-MS.get_provider = lambda pid: Boom() if pid == "comick" else _GoodProv()
-results, tried = MS.search_all("solo")
-MS.get_provider = real_gp
-ok("one dead provider ≠ dead search", len(results) >= 1
-   and any(pid == "comick" and isinstance(o, str) for pid, o in tried), str(tried))
-ok("37 SFW sources in default order", len(MS.SEARCH_ORDER) == 37, str(len(MS.SEARCH_ORDER)))
-ok("CHAPTERS_ARG covers defaults", all(p in MS.CHAPTERS_ARG for p in MS.SEARCH_ORDER))
-ok("NSFW locked by default",
-   all(pid not in ("manhwaclan", "manga18fx", "manhwa18") for pid, _ in tried))
-os.environ["ANIMEDL_MANGA_NSFW"] = "1"
-from manga_sources import nsfw as nsfw_mod
-ok("nsfw env gate flips", nsfw_mod.nsfw_enabled() is True)
-p18 = MS.get_provider("manga18fx")
-ok("gated provider loads when enabled", p18 is not None and p18.id == "manga18fx")
-os.environ["ANIMEDL_MANGA_NSFW"] = "0"
-try:
-    MS.get_provider("manga18fx")
-    ok("gated provider locked when disabled", False, "loaded!")
-except MangaError:
-    ok("gated provider locked when disabled", True)
-
-# ══ 10. sanitize + plugin wiring + version ══════════════════════════════════
-print("— sanitize & wiring")
-ok("sanitize strips junk", sanitize('a/b:c*d?"<>|') == "abcd")
-plug = Path(ROOT, "cantarella", "telegram", "plugins", "manga.py").read_text()
-ok("plugin dispatches via CHAPTERS_ARG", "CHAPTERS_ARG" in plug)
-ok("plugin sends documents", "send_document" in plug)
-ok("no third-party branding",
-   not any(b in plug.lower() for b in ("codeflix", "abhinai", "dra-sama")))
-ok("help mentions /manga", "/manga" in Path(ROOT, "Script.py").read_text())
-from config import VERSION
-ok("VERSION == 4.22.0", VERSION == "5.3.0", VERSION)
-
-# ══ 11. LIVE probes (best-effort) ═══════════════════════════════════════════
-print("— live probes (best-effort)")
-import requests as _rq
-try:
-    _rq.get("https://api.mangadex.org/ping", timeout=5)
-    live = mdx.MangaDexProvider()
-    live_res = live.search("solo leveling")
-    ok("LIVE mangadex search", len(live_res) > 0, f"{len(live_res)}")
-    if live_res:
-        live_chs = live.chapters(live_res[0].id)
-        ok("LIVE mangadex chapters", len(live_chs) > 0, f"{len(live_chs)}")
-        if live_chs:
-            urls, ref = live.images(live_chs[0])
-            ok("LIVE mangadex images", len(urls) > 0, f"{len(urls)}")
-except Exception as e:
-    print(f"  ⏭ live mangadex unreachable: {type(e).__name__}")
-try:
-    _rq.get("https://asuracomic.net", timeout=5)
-    live_ap = asr.AsuraProvider()
-    r2 = live_ap.search("solo leveling")
-    ok("LIVE asura search", len(r2) > 0, f"{len(r2)}")
-except Exception as e:
-    print(f"  ⏭ live asura unreachable: {type(e).__name__}")
-
-# ══ 12. more.py — MangaKakalot / MangaSee / Mangabuddy / NineManga ══════════
-print("— more providers (mangakakalot, mangasee, mangabuddy, ninemanga)")
-import manga_sources.more as more
-
-mkk = more.MangaKakalotProvider()
-MKK_SEARCH = ('<a href="/manga/solo-bug"><img src="https://c.mkk/s.jpg" alt="Solo Bug"></a>'
-              '<a href="/manga/other-x"><img src="https://c.mkk/o.jpg" alt="Other X"></a>')
-more.http_get = lambda url, headers=None: type("R", (), {"text": MKK_SEARCH, "status_code": 200})()
-s = mkk.search("solo")
-ok("mangakakalot search", len(s) == 2 and s[0].title == "Solo Bug"
-   and s[0].url.endswith("/manga/solo-bug"), str(s)[:80])
-MKK_CH = ('<div class="chapter-list"><div class="row"><a href="/manga/solo-bug/chapter-14">Ch 14</a></div>'
-          '<div class="row"><a href="/manga/solo-bug/chapter-13.5">Ch 13.5</a></div></div>')
-more.http_get = lambda url, headers=None: type("R", (), {"text": MKK_CH, "status_code": 200})()
-chs = mkk.chapters("https://www.mangakakalot.gg/manga/solo-bug")
-ok("mangakakalot chapters", [c.number for c in chs] == ["14", "13.5"], str(chs)[:80])
-MKK_IMG = '<div class="container-chapter-reader"><img src="https://cm.mkki/1.webp"/><img src="https://cm.mkki/2.webp"/></div>'
-more.http_get = lambda url, headers=None: type("R", (), {"text": MKK_IMG, "status_code": 200})()
-urls, ref = mkk.images(chs[0])
-ok("mangakakalot images", urls == ["https://cm.mkki/1.webp", "https://cm.mkki/2.webp"], str(urls))
-
-mse = more.MangaseeProvider()
-more._post_json = lambda url, data=None: [
-    {"i": "Solo-Bug-Farmer", "s": "Solo Bug Farmer", "a": ["SBF"]},
-    {"i": "Other-X", "s": "Other X", "a": []}]
-s = mse.search("bug")
-ok("mangasee search (client-side filter)", len(s) == 1
-   and s[0].cover.endswith("/cover/Solo-Bug-Farmer.jpg"), str(s)[:80])
-MS_CH = ('vm.Chapters = [{"Chapter": "1140","Type":"Chapter"}'
-         ',{"Chapter": "11355","Type":"Chapter"}];'
-         'vm.IndexName = "Solo-Bug-Farmer";')
-more.http_get = lambda url, headers=None: type("R", (), {"text": MS_CH, "status_code": 200})()
-chs = mse.chapters("https://mangasee123.com/manga/Solo-Bug-Farmer")
-ok("mangasee chapter decode", [c.number for c in chs] == ["14", "135.5"]
-   and chs[0].url.endswith("/read-online/Solo-Bug-Farmer-chapter-14.html"), str(chs)[:100])
-MS_READ = ('vm.CurChapter = {"Chapter":"1140","Page":"2","Directory":""};'
-           'vm.CurPathName = "scans.mangasee.com";vm.IndexName = "Solo-Bug-Farmer";')
-more.http_get = lambda url, headers=None: type("R", (), {"text": MS_READ, "status_code": 200})()
-urls, ref = mse.images(chs[0])
-ok("mangasee image construction",
-   urls == ["https://scans.mangasee.com/manga/Solo-Bug-Farmer/14-001.png",
-            "https://scans.mangasee.com/manga/Solo-Bug-Farmer/14-002.png"], str(urls))
-
-mbd = more.MangabuddyProvider()
-MBD_SEARCH = ('<div class="book-item"><a href="/manga/solo-bug"><img data-src="https://img.mb/s.jpg" alt="Solo Bug"/></a></div>')
-more.http_get = lambda url, headers=None: type("R", (), {"text": MBD_SEARCH, "status_code": 200})()
-s = mbd.search("solo")
-ok("mangabuddy search (first-party)", len(s) == 1 and s[0].url.endswith("/manga/solo-bug")
-   and s[0].title == "Solo Bug", str(s)[:80])
-MBD_CH = '<ul id="chapter-list"><li><a href="/manga/solo-bug/chapter-9"><strong class="chapter-title">Chapter 9</strong></a></li></ul>'
-more.http_get = lambda url, headers=None: type("R", (), {"text": MBD_CH, "status_code": 200})()
-chs = mbd.chapters("https://mangabuddy.com/manga/solo-bug")
-ok("mangabuddy chapters", [c.number for c in chs] == ["9"], str(chs)[:80])
-more.http_get = lambda url, headers=None: type("R", (), {"text": "var chapImages = 'https://i.mb/1.jpg,https://i.mb/2.jpg';", "status_code": 200})()
-urls, ref = mbd.images(chs[0])
-ok("mangabuddy chapImages", urls == ["https://i.mb/1.jpg", "https://i.mb/2.jpg"], str(urls))
-
-nmn = more.NinemangaProvider()
-NMN_SEARCH = ('<ul class="direlist"><li><a class="bookname" href="/manga/Solo+Bug"><img src="https://c.nm/s.jpg"/>Solo Bug</a></li></ul>')
-more.http_get = lambda url, headers=None: type("R", (), {"text": NMN_SEARCH, "status_code": 200})()
-s = nmn.search("solo")
-ok("ninemanga search", len(s) == 1 and s[0].url.endswith("/manga/Solo+Bug"), str(s)[:80])
-NMN_CH = '<div class="chapterbox"><li><a href="/manga/Solo+Bug/10/">Chapter 10</a></li></div>'
-more.http_get = lambda url, headers=None: type("R", (), {"text": NMN_CH, "status_code": 200})()
-chs = nmn.chapters("https://www.ninemanga.com/manga/Solo+Bug")
-ok("ninemanga chapters", [c.number for c in chs] == ["10"], str(chs)[:80])
-PAGES = ['<select id="page"><option value="/read/Solo+Bug/10/1"></option><option value="/read/Solo+Bug/10/2"></option></select><img class="manga_pic" src="https://pic.nm/1.jpg"/>',
-         '<img class="manga_pic" src="https://pic.nm/2.jpg"/>']
-more.http_get = lambda url, headers=None: type("R", (), {"text": PAGES[1] if url.endswith("/2") else PAGES[0], "status_code": 200})()
-urls, ref = nmn.images(chs[0])
-ok("ninemanga multi-page reader", urls == ["https://pic.nm/1.jpg", "https://pic.nm/2.jpg"], str(urls))
-
-ok("CHAPTERS_ARG covers registry",
-   all(p in MS.CHAPTERS_ARG for p in MS.SEARCH_ORDER))
-ok("40 providers registered", len(MS.PROVIDER_NAMES) == 40, str(len(MS.PROVIDER_NAMES)))
-
-# ══ 13. NSFW premium gating (search flag + plugin guards) ═══════════════════
-print("— NSFW premium gating")
-os.environ["ANIMEDL_MANGA_NSFW"] = "1"
-res2, tried2 = MS.search_all("solo", nsfw=False)
-ok("search_all(nsfw=False) skips 18+",
-   all(pid not in MS.NSFW_IDS for pid, _ in tried2), str([p for p, _ in tried2]))
-res3, tried3 = MS.search_all("solo", nsfw=True)
-ok("search_all(nsfw=True) tries 18+ (env on)",
-   any(pid == "manga18fx" for pid, _ in tried3), str([p for p, _ in tried3]))
-os.environ["ANIMEDL_MANGA_NSFW"] = "0"
-res4, tried4 = MS.search_all("solo", nsfw=True)
-ok("env OFF overrides nsfw=True flag",
-   all(pid not in MS.NSFW_IDS for pid, _ in tried4))
-
-import asyncio as _aio
-import cantarella.telegram.plugins.manga as mplug
-async def _gate_check():
-    # db unreachable -> premium False -> nsfw never allowed
-    return (await mplug._nsfw_allowed(42), await mplug._default_fmt(42))
-_loop = _aio.get_event_loop()
-gate, dfmt = _loop.run_until_complete(_gate_check())
-ok("_nsfw_allowed denies without premium/db", gate is False)
-ok("_default_fmt falls back to pdf", dfmt == "pdf")
-
-class _FakeDB:
-    def __init__(self, prem, show, fmt):
-        self.prem, self.show, self.fmt = prem, show, fmt
-    async def is_premium(self, uid): return self.prem
-    async def get_user_setting(self, uid, key, default=None):
-        return {"show_nsfw": self.show, "manga_format": self.fmt}.get(key, default)
-    async def premium_until(self, uid): return "2027-01-01T00:00:00"
-import cantarella.core.database as cdb
-_real_db = cdb.db
-cdb.db = _FakeDB(prem=True, show=True, fmt="cbz")
-os.environ["ANIMEDL_MANGA_NSFW"] = "1"
-gate2 = _loop.run_until_complete(mplug._nsfw_allowed(42))
-cdb.db = _FakeDB(prem=False, show=True, fmt="cbz")
-gate3 = _loop.run_until_complete(mplug._nsfw_allowed(42))
-os.environ["ANIMEDL_MANGA_NSFW"] = "0"
-cdb.db = _FakeDB(prem=True, show=True, fmt="cbz")
-gate4 = _loop.run_until_complete(mplug._nsfw_allowed(42))
-cdb.db = _real_db
-ok("premium + opt-in + env -> nsfw on", gate2 is True)
-ok("no premium -> nsfw off", gate3 is False)
-ok("env off -> nsfw off even premium", gate4 is False)
-
-# usettings builders are pure functions — verify shapes
-import cantarella.telegram.plugins.usettings as us
-mk_free = us._settings_markup({"fmt": "pdf", "nsfw": False, "premium": False, "until": ""})
-mk_prem = us._settings_markup({"fmt": "cbz", "nsfw": True, "premium": True, "until": "2027-01-01"})
-_free_labels = [b.text for row in mk_free.inline_keyboard for b in row]
-_prem_labels = [b.text for row in mk_prem.inline_keyboard for b in row]
-ok("usettings hides toggle for free users",
-   any("ᴘʀᴇᴍɪᴜᴍ ᴏɴʟʏ" in l for l in _free_labels)
-   and not any(l.startswith("🔞 18+ ꜱᴏᴜʀᴄᴇꜱ: ᴏɴ") for l in _free_labels))
-ok("usettings shows toggle for premium",
-   any("🔞" in l for l in _prem_labels))
-txt_free = us._settings_text({"fmt": "pdf", "nsfw": False, "premium": False, "until": ""})
-ok("usettings text renders", "ᴘᴅꜰ" in txt_free and "ᴏꜰꜰ" in txt_free)
-
-
-# ══ 14. v4.24.0 — cloudscraper escalation, http_post, richgram UI ═══════════
-print("— cloudscraper escalation + http layer (v4.24.0 render-log fixes)")
-import manga_sources.base as _base
-
-# a) params fix: real http_json forwards params (mangadex render bug)
-import inspect
-ok("http_json accepts params",
-   "params" in inspect.signature(_base.http_json).parameters)
-ok("http_get accepts params",
-   "params" in inspect.signature(_base.http_get).parameters)
-ok("http_post exists",
-   callable(getattr(_base, "http_post", None)))
-
-# b) cloudscraper escalation: plain requests 403 → CS session returns 200
-class _CS:
-    def __init__(self, payload):
-        self.payload = payload
-        self.calls = 0
-    def get(self, url, headers=None, params=None, data=None, timeout=None):
-        self.calls += 1
-        return type("R", (), {"status_code": 200, "text": self.payload,
-                              "headers": {}})()
-
-_probe = {"n": 0}
-def _blocked_get(url, headers=None, params=None, timeout=None):
-    _probe["n"] += 1
-    raise _base.requests.exceptions.SSLError("no")  # pragma: no cover
-class _Blocked403:
-    def get(self, url, headers=None, params=None, data=None, timeout=None):
-        return type("R", (), {"status_code": 403, "text": "cf", "headers": {}})()
-
-_cs_fake = _CS("hello-after-cs")
-_real_scraper = _base._scraper
-_base._scraper = lambda: _cs_fake
-_real_requests_get = _base.requests.get
-def _req403(url, headers=None, params=None, data=None, timeout=None):
-    return _Blocked403().get(url)
-_base.requests.get = _req403
-try:
-    resp = _base.http_get("https://cf-blocked.example/search?q=x")
-    ok("403 escalates to cloudscraper",
-       resp.status_code == 200 and _cs_fake.calls == 1
-       and _probe["n"] == 0)
-finally:
-    _base.requests.get = _real_requests_get
-    _base._scraper = _real_scraper
-
-# c) escalation does NOT trigger for non-block statuses (e.g. 404 → error)
-class _NotFound:
-    def get(self, url, headers=None, params=None, data=None, timeout=None):
-        return type("R", (), {"status_code": 404, "text": "x", "headers": {}})()
-_cs_fake2 = _CS("should-not-be-used")
-_base._scraper = lambda: _cs_fake2
-_base.requests.get = lambda url, headers=None, params=None, data=None, timeout=None: \
-    _NotFound().get(url)
-try:
-    _base.http_get("https://example/missing")
-    ok("404 stays a clean failure", False)
-except IOError as e:
-    ok("404 stays a clean failure", "404" in str(e) and _cs_fake2.calls == 0, str(e))
-finally:
-    _base.requests.get = _real_requests_get
-    _base._scraper = _real_scraper
-
-# d) http_post escalation
-class _Post403_200:
-    def post(self, url, data=None, headers=None, params=None, timeout=None):
-        return type("R", (), {"status_code": 200, "text": "posted",
-                              "headers": {}})()
-def _post403(url, data=None, headers=None, params=None, timeout=None):
-    return type("R", (), {"status_code": 403, "text": "cf", "headers": {}})()
-_p = _Post403_200()
-_real_requests_post = _base.requests.post
-_base.requests.post = _post403
-_base._scraper = lambda: _p
-try:
-    r = _base.http_post("https://blocked.example/post", data={"a": "b"})
-    ok("http_post escalates on 403", r.status_code == 200 and r.text == "posted")
-finally:
-    _base.requests.post = _real_requests_post
-    _base._scraper = _real_scraper
-
-# e) UI: _render_results builds the richgram card (health bar + chips + pages)
-print("— richgram-style results renderer")
-import cantarella.telegram.plugins.manga as _mp
-ok("badges unique across registry",
-   len({_mp._badge(p) for p in MS.SEARCH_ORDER}) == len(MS.SEARCH_ORDER))
-
-class _FakeMsg:
-    def __init__(self):
-        self.captured = {}
-    async def edit_message_caption(self, caption=None, reply_markup=None, **k):
-        self.captured = {"text": caption, "markup": reply_markup,
-                         "caption": True}
-    async def edit_text(self, text=None, reply_markup=None, **k):
-        self.captured = {"text": text, "markup": reply_markup, "caption": False}
-
-_mp.user_manga[4242] = {
-    "query": "one piece", "results": [], "mangas": {}, "chapters": {},
-    "tried": [("mangadex", 3), ("comick", "MangaError: x"), ("asura", 2)],
-}
-_msg = _FakeMsg()
-_loop2 = _aio.get_event_loop()
-_loop2.run_until_complete(_mp._render_results(_msg, 4242, 0))
-_cap = _msg.captured.get("text") or ""
-ok("results card has health bar", "▰" in _cap and "2/3" in _cap, _cap[:120])
-ok("results card chips with warn", "ᴄᴋ ⚠️" in _cap, _cap[:160])
-_markup = _msg.captured.get("markup")
-_labels = [b.text for row in _markup.inline_keyboard for b in row] if _markup else []
-_mp.user_manga[4242]["results"] = [
-    MangaSearchResult(provider="mangadex", id=f"m{i}", title=f"T{i}")
-    for i in range(10)]
-_msg2 = _FakeMsg()
-_loop2.run_until_complete(_mp._render_results(_msg2, 4242, 0))
-_m2 = _msg2.captured.get("markup")
-_l2 = [b.text for row in _m2.inline_keyboard for b in row] if _m2 else []
-ok("8 results per page + nav",
-   sum(1 for l in _l2 if l.split("·")[0].strip().isdigit()) == 8
-   and any("1/2" in l for l in _l2) and any("➡️" in l for l in _l2), str(_l2))
-_msg3 = _FakeMsg()
-_loop2.run_until_complete(_mp._render_results(_msg3, 4242, 1))
-_m3 = _msg3.captured.get("markup")
-_l3 = [b.text for row in _m3.inline_keyboard for b in row] if _m3 else []
-ok("page 2 shows remainder + back",
-   sum(1 for l in _l3 if l.split("·")[0].strip().isdigit()) == 2
-   and any("⬅️" in l for l in _l3), str(_l3))
-ok("card header shows query",
-   "one piece" in (_msg2.captured.get("text") or ""))
-_mp.user_manga.pop(4242, None)
-
-# f) blocked-source search still returns other providers (render-log shape)
-class _CFDown:
-    def search(self, q):
-        raise IOError("HTTP 403 on https://cf.example/search")
-MS.get_provider = lambda pid: _CFDown() if pid in ("asura", "templetoons") \
-    else real_gp(pid)
-res5, tried5 = MS.search_all("one piece")
-MS.get_provider = real_gp
-ok("CF-blocked sources degrade to ⚠️, search survives",
-   any(pid == "asura" and isinstance(o, str) for pid, o in tried5)
-   and len(tried5) == len(MS.SEARCH_ORDER), str(tried5)[:120])
-
-
-# ══ 15. v4.24.1 — callbacks parse cq.data (no .pattern on CallbackQuery) ════
-print("— v4.24.1 callback parsing (render AttributeError fix)")
-for _plug in ("cantarella/telegram/plugins/manga.py",
-              "cantarella/telegram/plugins/usettings.py"):
-    _psrc = Path(_plug).read_text()
-    ok("no cq.pattern left in " + _plug.split("/")[-1],
-       "cq.pattern" not in _psrc)
-
-class _FakeMsg2:
-    def __init__(self):
-        self.captured = {}
-    async def edit_message_caption(self, caption=None, reply_markup=None, **k):
-        self.captured = {"text": caption, "markup": reply_markup}
-    async def edit_text(self, text=None, reply_markup=None, **k):
-        self.captured = {"text": text, "markup": reply_markup}
-
-class _FakeCQ:
-    """Mimics the real runtime: NO .pattern attribute at all."""
-    def __init__(self, data, uid):
-        self.data = data
-        self.from_user = type("U", (), {"id": uid})()
-        self.message = _FakeMsg2()
-        self.answered = []
-    async def answer(self, text=None, show_alert=False):
-        self.answered.append((text, show_alert))
-    async def edit_message_caption(self, caption=None, reply_markup=None, **k):
-        await self.message.edit_message_caption(caption=caption,
-                                                reply_markup=reply_markup, **k)
-    async def edit_message_text(self, text=None, reply_markup=None, **k):
-        await self.message.edit_text(text=text, reply_markup=reply_markup, **k)
-
-_loop3 = _aio.get_event_loop()
-
-# the exact crash from the report: mgp_ pick with no .pattern attribute
-_fake_prov_calls = []
-class _FakeProv:
-    def chapters(self, arg):
-        _fake_prov_calls.append(arg)
-        return [MangaChapter(id="c1", number="33", title="War")]
-_real_gp15 = MS.get_provider
-MS.get_provider = lambda pid: _FakeProv()
-_cq = _FakeCQ("mgp_mangadex_0", 5150)
-_mp.user_manga[5150] = {"query": "op", "results": [
-    MangaSearchResult(provider="mangadex", id="mid", title="One Piece Test")],
-    "mangas": {}, "chapters": {}, "tried": [("mangadex", 1)]}
-_loop3.run_until_complete(_mp.on_manga_pick(None, _cq))
-ok("on_manga_pick works without .pattern",
-   _fake_prov_calls == ["mid"]
-   and _mp.user_manga[5150]["chapters"]["mangadex_0"][0].number == "33",
-   str(_mp.user_manga[5150].get("chapters")))
-MS.get_provider = _real_gp15
-
-# respage
-_cq = _FakeCQ("mgsl_1", 5150)
-_mp.user_manga[5150]["results"] = [
-    MangaSearchResult(provider="mangadex", id=f"m{i}", title=f"T{i}")
-    for i in range(10)]
-_loop3.run_until_complete(_mp.on_manga_respage(None, _cq))
-ok("on_manga_respage parses cq.data",
-   _mp.user_manga[5150].get("res_page") == 1
-   and "2/2" in (_cq.message.captured.get("text") or ""))
-
-# chpage
-_cq = _FakeCQ("mgc_mangadex_0_0", 5151)
-_mp.user_manga[5151] = {
-    "mangas": {"mangadex_0": MangaSearchResult(provider="mangadex",
-                                               id="m", title="T")},
-    "chapters": {"mangadex_0": [MangaChapter(id="c1", number="1")]},
-    "results": [], "query": "x", "tried": []}
-_loop3.run_until_complete(_mp.on_manga_chpage(None, _cq))
-ok("on_manga_chpage parses cq.data",
-   "ᴄʜᴀᴘᴛᴇʀꜱ: 1" in (_cq.message.captured.get("text") or ""),
-   str(_cq.message.captured)[:120])
-
-# download guard: parse succeeds → proceeds to stale-check (state empty on purpose)
-_cq = _FakeCQ("mgd_mangadex_0_0_3_pdf", 5152)
-_mp.user_manga[5152] = {"mangas": {}, "chapters": {}, "results": [],
-                        "query": "x", "tried": []}
-_loop3.run_until_complete(_mp.on_manga_download(None, _cq))
-ok("on_manga_download parses 4-group cq.data",
-   any("ꜱᴛᴀʟᴇ ʟɪɴᴋ" in (a[0] or "") for a in _cq.answered), str(_cq.answered))
-
-# usettings format toggle
-import cantarella.telegram.plugins.usettings as _us
-import cantarella.core.database as _cdb15
-class _FakeDB15:
-    async def set_user_setting(self, uid, key, value): return True
-    async def get_user_setting(self, uid, key, default=None):
-        return {"manga_format": "cbz", "show_nsfw": False}.get(key, default)
-    async def is_premium(self, uid): return False
-_real_db15 = _cdb15.db
-_cdb15.db = _FakeDB15()
-_cq = _FakeCQ("us_fmt_cbz", 5153)
-_loop3.run_until_complete(_us.on_us_fmt(None, _cq))
-_cdb15.db = _real_db15
-ok("on_us_fmt parses cq.data",
-   "ᴄʙᴢ" in (_cq.message.captured.get("text") or ""), str(_cq.message.captured)[:120])
-_mp.user_manga.pop(5150, None); _mp.user_manga.pop(5151, None)
-_mp.user_manga.pop(5152, None)
-
-
-# ══ 16. v4.25.0 — MangaBot command suite (/msearch /minfo /mqueue …) ════════
-print("— MangaBot suite (manga-repo commands, no duplicates)")
-import manga_sources.mangadex as _mdxm
-
-# random_sfw + info parsing via faked module-level http_json
-_RAND_ITEM = {"id": "rand1", "attributes": {
-    "title": {"en": "Random Toon"}, "status": "ongoing",
-    "year": 2024, "tags": [{"attributes": {"name": {"en": "Comedy"}}}],
-    "description": {"en": "A very random toon about things. " * 40}},
-    "relationships": [{"type": "cover_art",
-                       "attributes": {"fileName": "r.jpg"}}]}
-def _fake_json(url, headers=None, params=None):
-    if "/random-manga" in url:
-        return {"data": _RAND_ITEM}
-    if url.endswith("/manga"):
-        assert params and params.get("title"), "info must pass title param"
-        return {"data": [_RAND_ITEM]}
-    raise AssertionError("unexpected url " + url)
-_real_mdx_json = _mdxm.http_json
-_mdxm.http_json = _fake_json
-try:
-    _mdx_p = _mdxm.MangaDexProvider()
-    rr = _mdx_p.random_sfw()
-    ok("random_sfw parses", rr.id == "rand1" and rr.title == "Random Toon"
-       and rr.cover.endswith("/covers/rand1/r.jpg.256.jpg"))
-    inf = _mdx_p.info("random toon")
-    ok("info card fields", inf["status"] == "ongoing" and inf["year"] == 2024
-       and inf["tags"] == ["Comedy"]
-       and len(inf["description"]) > 350 and inf["result"].id == "rand1")
-finally:
-    _mdxm.http_json = _real_mdx_json
-
-# mangabot registration + source lists consistent with the registry
-import cantarella.telegram.plugins.mangabot as _mb
-def _cmd_names15(obj, seen=None):
-    seen = seen or set()
-    if id(obj) in seen:
-        return set()
-    seen.add(id(obj))
-    out = set()
-    v = getattr(obj, "commands", None)
-    if v:
-        out.update(v)
-    for attr in ("filters", "parent", "base", "other"):
-        v = getattr(obj, attr, None)
-        if isinstance(v, (list, tuple)):
-            for s in v:
-                out |= _cmd_names15(s, seen)
-        elif v is not None and hasattr(v, "__dict__"):
-            out |= _cmd_names15(v, seen)
-    return out
-_mb_cmds = set()
-for h in _mb.__dict__.values():
-    if hasattr(h, "handlers"):
-        for h2, _ in h.handlers:
-            f = getattr(h2, "filters", None)
-            if f is not None:
-                _mb_cmds |= _cmd_names15(f)
-for c in ("msearch", "minfo", "mqueue", "mclean", "mrefresh", "mpost"):
-    ok(f"/{c} registered", c in _mb_cmds, str(sorted(_mb_cmds)))
-ok("no duplicate of /manga in mangabot", "manga" not in _mb_cmds)
-ok("mangabot sources == registry SFW",
-   set(_mb._SFW) == set(MS.SEARCH_ORDER))
-ok("mangabot NSFW list == NSFW_IDS", set(_mb._NSFW) == set(MS.NSFW_IDS))
-
-# last_dl wiring (mrefresh depends on it)
-ok("manga.py records last_dl",
-   'state["last_dl"]' in Path("cantarella/telegram/plugins/manga.py").read_text())
-
-# help + menu mention the suite
-_scr15 = Path("Script.py").read_text()
-ok("help mentions MangaBot suite",
-   "/msearch" in _scr15 and "/mrefresh" in _scr15 and "/mpost" in _scr15)
-_utils15 = Path("cantarella/telegram/utils.py").read_text()
-ok("menu registers MangaBot suite",
-   all(c in _utils15 for c in ("msearch", "minfo", "mqueue", "mclean",
-                               "mrefresh", "mpost")))
-
-
-# ══ 17. v5.1.0 — MangaTracker (/msubscribe /msubs /munsub /mcheck) ══════════
-print("— MangaTracker (chapter subscriptions, same engine)")
-import cantarella.telegram.plugins.mtracker as _mt
-
-class _SubCol:
-    def __init__(self):
-        self.docs = {}
-    async def find_one(self, q):
-        return self.docs.get(q.get("_id"))
-    async def insert_one(self, d):
-        self.docs[d["_id"]] = dict(d)
-    def find(self, q):
-        uid = q.get("uid")
-        docs = [d for d in self.docs.values()
-                if uid is None or d["uid"] == uid]
-        class _F:
-            async def to_list(self, n):
-                return docs
-        return _F()
-    async def delete_one(self, q):
-        d = self.docs.pop(q.get("_id"), None)
-        return type("R", (), {"deleted_count": 1 if d else 0})()
-    async def delete_many(self, q):
-        uid = q.get("uid")
-        ids = [k for k, v in self.docs.items() if v["uid"] == uid]
-        for k in ids:
-            self.docs.pop(k, None)
-        return type("R", (), {"deleted_count": len(ids)})()
-    async def update_one(self, q, upd):
-        d = self.docs.get(q.get("_id"))
-        if d:
-            d.update(upd["$set"])
-
-import cantarella.core.database as _cdb20
-_real_db20 = _cdb20.db
-class _Shim:
-    add_manga_sub = _real_db20.__class__.add_manga_sub
-    get_manga_subs = _real_db20.__class__.get_manga_subs
-    del_manga_sub = _real_db20.__class__.del_manga_sub
-    del_manga_subs_all = _real_db20.__class__.del_manga_subs_all
-    update_manga_sub = _real_db20.__class__.update_manga_sub
-_fdb20 = _Shim()
-_fdb20.manga_subs = _SubCol()
-_cdb20.db = _fdb20
-
-_loop20 = _aio.get_event_loop()
-_sub_doc = _loop20.run_until_complete(_fdb20.add_manga_sub(
-    uid=77, provider="mangadex", series_id="seriesX", title="Followed Toon",
-    url="https://mangadex.org/title/seriesX", last_chapter="10"))
-ok("add_manga_sub stores + dedupes",
-   _sub_doc["_id"] == "77:mangadex:seriesX"
-   and _loop20.run_until_complete(_fdb20.add_manga_sub(
-       uid=77, provider="mangadex", series_id="seriesX",
-       title="Followed Toon"))["_id"] == "77:mangadex:seriesX")
-
-# check_subs: fake provider reports ch 12 (> 10) → update + report
-class _UpProv:
-    def __init__(self, num):
-        self.num = num
-    def chapters(self, arg):
-        assert arg in ("seriesX", "https://mangadex.org/title/seriesX"), arg
-        return [MangaChapter(id="n1", number=self.num, title="New Arc")]
-_real_gp20 = MS.get_provider
-MS.get_provider = lambda pid: _UpProv("12")
-try:
-    ups = _loop20.run_until_complete(_mt.check_subs(77))
-    ok("check_subs detects newer chapter",
-       len(ups) == 1 and ups[0][1].number == "12")
-    subs_now = _loop20.run_until_complete(_fdb20.get_manga_subs(77))
-    ok("check_subs persisted last_chapter", subs_now[0]["last_chapter"] == "12")
-    ups2 = _loop20.run_until_complete(_mt.check_subs(77))
-    ok("no re-report at same chapter", ups2 == [])
-finally:
-    MS.get_provider = _real_gp20
-
-# dead source tolerated
-class _DeadProv:
-    def chapters(self, arg):
-        raise IOError("HTTP 403")
-MS.get_provider = lambda pid: _DeadProv()
-try:
-    ups3 = _loop20.run_until_complete(_mt.check_subs(77))
-    ok("dead source skipped, no crash", ups3 == [])
-finally:
-    MS.get_provider = _real_gp20
-
-# unfollow
-ok("del_manga_sub", _loop20.run_until_complete(
-    _fdb20.del_manga_sub(77, "77:mangadex:seriesX")) is True
-   and _loop20.run_until_complete(_fdb20.get_manga_subs(77)) == [])
-
-# registration + no duplicates
-def _cmd_names20(obj, seen=None):
-    seen = seen or set()
-    if id(obj) in seen:
-        return set()
-    seen.add(id(obj))
-    out = set()
-    v = getattr(obj, "commands", None)
-    if v:
-        out.update(v)
-    for attr in ("filters", "parent", "base", "other"):
-        v = getattr(obj, attr, None)
-        if isinstance(v, (list, tuple)):
-            for s in v:
-                out |= _cmd_names20(s, seen)
-        elif v is not None and hasattr(v, "__dict__"):
-            out |= _cmd_names20(v, seen)
-    return out
-mt_cmds = set()
-for h in _mt.__dict__.values():
-    if hasattr(h, "handlers"):
-        for h2, _ in h.handlers:
-            f = getattr(h2, "filters", None)
-            if f is not None:
-                mt_cmds |= _cmd_names20(f)
-for c in ("msubscribe", "msubs", "munsub", "mcheck"):
-    ok(f"/{c} registered", c in mt_cmds, str(sorted(mt_cmds)))
-ok("tracker adds no duplicate commands",
-   not mt_cmds & {"manga", "msearch", "settings", "search", "queue", "list"})
-mb_src = Path("cantarella/telegram/plugins/mangabot.py").read_text()
-ok("tracker lives in its own plugin (mangabot untouched)",
-   "msubscribe" not in mb_src)
-ok("main starts the tracker loop",
-   "sub_check_loop" in Path("main.py").read_text())
-ok("menu registers tracker",
-   all(c in Path("cantarella/telegram/utils.py").read_text()
-       for c in ("msubscribe", "msubs", "munsub", "mcheck")))
-_cdb20.db = _real_db20
-
-
-# ══ 18. v5.3.0 — caches, per-user interval, channel, export/import, cards ═══
-print("— v5.3.0 tracker features (repo-inspired: interval/channel/thumb/export)")
-import time as _t53
-
-# a) search cache: same query twice → provider hit once
-_calls53 = {"n": 0}
-class _CountProv:
-    def search(self, q):
-        _calls53["n"] += 1
-        return [MS.MangaSearchResult(provider="mangadex", id="c1",
-                                     title="Cached Toon")]
-import os as _os53
-_real_gp53 = MS.get_provider
-_old_ttl = _os53.environ.get("MANGA_CACHE_TTL")
-_os53.environ["MANGA_CACHE_TTL"] = "600"
-MS.get_provider = lambda pid: _CountProv()
-r_a, _ = MS.search_all("cache probe", providers=("mangadex",))
-r_b, _ = MS.search_all("cache probe", providers=("mangadex",))
-ok("search cache: 2 calls → 1 upstream hit", _calls53["n"] == 1 and len(r_b) == 1)
-_os53.environ["MANGA_CACHE_TTL"] = "0"
-MS._SEARCH_CACHE.clear()
-MS.search_all("cache probe", providers=("mangadex",))
-ok("TTL=0 disables cache", _calls53["n"] == 2)
-if _old_ttl is not None:
-    _os53.environ["MANGA_CACHE_TTL"] = _old_ttl
-else:
-    _os53.environ.pop("MANGA_CACHE_TTL", None)
-MS.get_provider = _real_gp53
-
-# b) chapters cache inside the external adapter
-class _FakeScraper:
-    def __init__(self):
-        self.ch_calls = 0
+    print(f"  {'✅' if cond else '❌'} {name}" + (f" — {extra}" if (extra and not cond) else ""))
+
+print("═ test_manga (v6.0.0): vendored manga chapter-update engine ═")
+
+# ══ 1. vendor integrity ═════════════════════════════════════════════════════
+print("— vendor integrity")
+import mangarepo.config as MC
+ok("config vendored", MC.Config.DOWNLOAD_DIR == "downloads")
+ok("MONGO_DB_URI falls back to MONGO_URL", bool(MC.Config.MONGO_DB_URI))
+from mangarepo.database.db import db as mdb
+ok("db instantiates (motor lazy)", mdb is not None)
+import mangarepo.sources as MSRC
+webs = [n for n in dir(MSRC) if n.endswith("Webs")]
+ok("35 scraper classes exported", len(webs) == 35, f"{len(webs)}")
+ok("scraper interface uniform",
+   all(all(hasattr(getattr(MSRC, n), m) for m in
+           ("search", "get_chapters", "iter_chapters", "get_pictures"))
+       for n in webs))
+ok("key sources present",
+   all(hasattr(MSRC, n) for n in ("AsuraScansWebs", "ComickWebs", "BatotoWebs",
+                                  "WeebCentralWebs", "MangaKakalotGGWebs")))
+
+# ══ 2. manager: loads all sources + parallel tagged merge ═══════════════════
+print("— source manager (services/mgr)")
+from mangarepo.services.mgr import mgr
+ok("mgr loads all 35 sources", len(mgr.srcs) == 35, f"{len(mgr.srcs)}")
+ok("mgr.get hits registry", mgr.get("ComickWebs") is not None)
+
+class _GoodSrc:
     async def search(self, q):
-        return [{"title": "Ext Toon", "url": "https://ext/x",
-                 "poster": "https://ext/c.jpg"}]
-    async def get_chapters(self, data):
-        self.ch_calls += 1
-        data["chapters"] = [{"title": "Chapter 5", "url": "https://ext/x/5",
-                             "chapter": "5"}]
-        return data
-    def iter_chapters(self, data):
-        return data["chapters"]
-    async def get_pictures(self, chap, url=None):
-        return ["https://ext/p1.jpg"]
-import manga_sources.external as _ext53
-_p53 = _ext53.ExternalProvider(_FakeScraper, "extfake", "ExtFake")
-found = _p53.search("ext")
-chs1 = _p53.chapters("https://ext/x")
-chs2 = _p53.chapters("https://ext/x")
-ok("external adapter search→chapters",
-   len(found) == 1 and [c.number for c in chs1] == ["5"])
-ok("external chapters cache: 2 calls → 1 upstream",
-   _p53.inst.ch_calls == 1 and [c.number for c in chs2] == ["5"])
-urls, ref = _p53.images(chs1[0])
-ok("external get_pictures bridged", urls == ["https://ext/p1.jpg"])
+        return [{"title": f"{q} Toon", "mid": "m1"}]
+class _BoomSrc:
+    async def search(self, q):
+        raise RuntimeError("site down")
+_real_srcs = mgr.srcs
+mgr.srcs = {"GoodWebs": _GoodSrc(), "BoomWebs": _BoomSrc()}
+res = _aio.new_event_loop().run_until_complete(mgr.search("solo"))
+mgr.srcs = _real_srcs
+ok("parallel search merges + tags src",
+   len(res) == 1 and res[0]["src"] == "GoodWebs" and res[0]["title"] == "solo Toon")
 
-# c) per-user interval
-import cantarella.telegram.plugins.mtracker as _mt
-class _SetDB:
-    def __init__(self):
-        self.s = {}
-    async def get_user_setting(self, uid, key, default=None):
-        return self.s.get(key, default)
-    async def set_user_setting(self, uid, key, value):
-        self.s[key] = value
-import cantarella.core.database as _cdb53
-_real_db53 = _cdb53.db
-_cdb53.db = _SetDB()
-_loop53 = _aio.new_event_loop(); _aio.set_event_loop(_loop53)
-ok("interval default = env 30", _loop53.run_until_complete(_mt._user_interval(9)) == 30)
-_loop53.run_until_complete(_cdb53.db.set_user_setting(9, "minterval", 15))
-ok("interval per-user override", _loop53.run_until_complete(_mt._user_interval(9)) == 15)
-_loop53.run_until_complete(_cdb53.db.set_user_setting(9, "minterval", 99999))
-ok("interval clamped to 720", _loop53.run_until_complete(_mt._user_interval(9)) == 720)
-_cdb53.db = _real_db53
+# ══ 3. REAL binary proof: PDF + CBZ built from local images ═════════════════
+print("— REAL PDF/CBZ binaries (services/dl)")
+from mangarepo.services.dl import DL
+from PIL import Image
+with tempfile.TemporaryDirectory() as td:
+    tdp = Path(td)
+    pages_dir = tdp / "pages"; pages_dir.mkdir()
+    for i in range(3):
+        Image.new("RGB", (60, 80), (i * 60, 90, 140)).save(pages_dir / f"{i:03d}.png")
+    d = DL()
+    pdf = d.pdf(pages_dir, "Solo Toon", "Chapter 12")
+    ok("PDF built (reportlab)", pdf is not None and Path(pdf).exists())
+    if pdf:
+        head = Path(pdf).read_bytes()[:5]
+        from pypdf import PdfReader
+        n_pages = len(PdfReader(str(pdf)).pages)
+        ok("PDF is a real 3-page PDF", head == b"%PDF-" and n_pages == 3,
+           f"head={head} pages={n_pages}")
+    cbz = d.cbz(pages_dir, "Solo Toon", "Chapter 12")
+    ok("CBZ built (zip)", cbz is not None and Path(cbz).exists())
+    if cbz:
+        with zipfile.ZipFile(cbz) as z:
+            names = z.namelist()
+        ok("CBZ holds 3 real pages", len([n for n in names if n.endswith(".png")]) == 3,
+           str(names))
+    from mangarepo.services.util import extract_chap_no, sanitize, clean_chap
+    ok("chapter number parsing", extract_chap_no("Chapter 12.5 — Extra") == "012.5")
+    ok("filename sanitizer", sanitize("A/B:C*D?") == "ABCD" or "/" not in sanitize("A/B"))
 
-# d) photo-card delivery: cover → reply_photo; no cover → text fallback
-class _Dest:
-    def __init__(self, fail_photo=False):
-        self.fail_photo = fail_photo
-        self.got = {}
-    async def reply_photo(self, photo, caption=None, reply_markup=None, **k):
-        if self.fail_photo:
-            raise RuntimeError("cdn blocked")
-        self.got = {"kind": "photo", "photo": photo, "caption": caption}
-        return self
-    async def reply_text(self, text, reply_markup=None, **k):
-        self.got = {"kind": "text", "text": text}
-        return self
-_sub53 = {"provider": "mangadex", "title": "Cover Toon",
-          "series_id": "sid", "cover": "https://cv/x.jpg", "url": "u",
-          "last_chapter": "3"}
-_ch53 = MangaChapter(id="n", number="9", title="")
-_d53 = _Dest()
-_loop53.run_until_complete(_mt.deliver_updates(_d53, 1, [(_sub53, _ch53)], "h"))
-ok("photo card uses series cover",
-   _d53.got.get("kind") == "photo" and _d53.got["photo"] == "https://cv/x.jpg"
-   and "ᴄʜᴀᴘᴛᴇʀ <b>9</b>" in (_d53.got.get("caption") or ""))
-_d53b = _Dest(fail_photo=True)
-_loop53.run_until_complete(_mt.deliver_updates(_d53b, 1, [(_sub53, _ch53)], "h"))
-ok("photo failure falls back to text card", _d53b.got.get("kind") == "text")
-_sub53nc = dict(_sub53, cover="")
-_d53c = _Dest()
-_loop53.run_until_complete(_mt.deliver_updates(_d53c, 1, [(_sub53nc, _ch53)], "h"))
-ok("no cover → straight text card", _d53c.got.get("kind") == "text")
+# ══ 4. DB subs mixin logic (fake collections) ═══════════════════════════════
+print("— engine DB (subs mixin, fake collections)")
+class _Cur:
+    def __init__(self, docs): self._d = list(docs)
+    async def to_list(self, n): return list(self._d)
+    def __aiter__(self):
+        async def _gen(docs):
+            for x in docs: yield x
+        return _gen(self._d)
+class _Col:
+    def __init__(self): self.docs = []
+    def _match(self, d, q): return all(d.get(k) == v for k, v in q.items())
+    async def find_one(self, q):
+        for x in self.docs:
+            if self._match(x, q): return dict(x)
+        return None
+    async def insert_one(self, d): self.docs.append(dict(d))
+    async def update_one(self, q, upd, upsert=False):
+        for x in self.docs:
+            if self._match(x, q):
+                for k, v in upd.get("$set", {}).items(): x[k] = v
+                for k, v in upd.get("$addToSet", {}).items():
+                    x.setdefault(k, [])
+                    if v not in x[k]: x[k].append(v)
+                return
+        if upsert:
+            nd = dict(q)
+            for k, v in upd.get("$set", {}).items(): nd[k] = v
+            self.docs.append(nd)
+    def find(self, q=None):
+        q = q or {}
+        return _Cur([dict(x) for x in self.docs if self._match(x, q)])
+    async def distinct(self, key, q=None):
+        q = q or {}
+        return sorted({x.get(key) for x in self.docs
+                       if self._match(x, q) and x.get(key) is not None})
+    async def delete_one(self, q):
+        for i, x in enumerate(self.docs):
+            if self._match(x, q): del self.docs[i]; return
 
-# e) export payload round-trip (the exact shape /mexport writes)
-subs53 = [_sub53]
-payload = {"animedl_msubs": 1, "subs": [
-    {k: s.get(k) for k in ("provider", "series_id", "title",
-                           "cover", "url", "last_chapter")}
-    for s in subs53]}
-blob = json.loads(json.dumps(payload))
-ok("export payload round-trips",
-   blob["animedl_msubs"] == 1 and blob["subs"][0]["series_id"] == "sid"
-   and blob["subs"][0]["last_chapter"] == "3")
+mdb.subs = _Col()
+loop = _aio.new_event_loop()
+sid1 = loop.run_until_complete(mdb.add_sub(7, {"title": "Toon A", "cid": -100,
+                                               "mid": "m1", "src": "AsuraScansWebs"}))
+ok("add_sub returns fresh sid", bool(sid1))
+sid_dup = loop.run_until_complete(mdb.add_sub(7, {"title": "Toon A", "cid": -100,
+                                                  "mid": "m2", "src": "ComickWebs"}))
+ok("add_sub dedupes same title+cid", sid_dup == sid1)
+loop.run_until_complete(mdb.add_source_to_sub(7, sid1, "m9", "BatotoWebs"))
+got = loop.run_until_complete(mdb.get_sub(7, sid1))
+ok("fallback sources accumulate", len(got["sources"]) == 2)
+loop.run_until_complete(mdb.add_sub(7, {"title": "Toon B", "cid": -200,
+                                        "mid": "m3", "src": "ComickWebs"}))
+subs7 = loop.run_until_complete(mdb.get_subs(7))
+ok("get_subs per-user", len(subs7) == 2)
+ok("user channels distinct", loop.run_until_complete(mdb.get_user_channels(7)) == [-200, -100])
 
-# f) registration + no duplicates + menu
-def _cmd_names53(obj, seen=None):
-    seen = seen or set()
-    if id(obj) in seen:
-        return set()
-    seen.add(id(obj))
+# ══ 5. per-user cfg + check scheduler interval gating ═══════════════════════
+print("— check scheduler (per-user interval gating)")
+import mangarepo.plugins.check.scheduler as sched_mod
+mdb.conf = _Col()
+loop.run_until_complete(mdb.set_cfg(7, "interval", 30))
+loop.run_until_complete(mdb.set_cfg(8, "interval", 60))
+loop.run_until_complete(mdb.set_cfg(9, "mon", False))
+loop.run_until_complete(mdb.add_sub(8, {"title": "Recent", "cid": -300,
+                                        "mid": "m4", "src": "ComickWebs"}))
+sched_mod.set_last_check(8, __import__("time").time())  # user 8 checked just now
+processed = []
+async def _fake_check(app, uid, sub):
+    processed.append((uid, sub["title"]))
+_real_psc = sched_mod.process_sub_check
+sched_mod.process_sub_check = _fake_check
+try:
+    loop.run_until_complete(sched_mod.check_job(app=None))
+finally:
+    sched_mod.process_sub_check = _real_psc
+ok("due user processed", (7, "Toon A") in [(u, t) for u, t in processed],
+   str(processed))
+ok("recent user skipped by interval", all(u != 8 for u, _ in processed))
+ok("mon=off user skipped", all(u != 9 for u, _ in processed))
+ok("last_check recorded for due user", sched_mod.get_last_check(7) > 0)
+ok("recent user last_check preserved",
+   abs(sched_mod.get_last_check(8) - __import__("time").time()) < 60)
+
+# ══ 6. bridge: engine handlers attach to a recorder client ══════════════════
+print("— mangabridge wiring")
+from cantarella.telegram.mangabridge import install_manga_engine, _MODULES
+class _RecApp:
+    def __init__(self): self.added = []
+    def add_handler(self, h, g=0): self.added.append((h, g))
+ra = _RecApp()
+n = install_manga_engine(ra)
+ok("all 12 engine modules load", n > 40 and ra.added, f"handlers={n}")
+
+def _collect_commands(h):
     out = set()
-    v = getattr(obj, "commands", None)
-    if v:
-        out.update(v)
-    for attr in ("filters", "parent", "base", "other"):
-        v = getattr(obj, attr, None)
-        if isinstance(v, (list, tuple)):
-            for s in v:
-                out |= _cmd_names53(s, seen)
-        elif v is not None and hasattr(v, "__dict__"):
-            out |= _cmd_names53(v, seen)
+    def walk(f):
+        if f is None: return
+        cmds = getattr(f, "commands", None)
+        if cmds: out.update(cmds)
+        for attr in ("filters", "parent", "base", "other"):
+            v = getattr(f, attr, None)
+            if isinstance(v, (list, tuple)):
+                for s in v: walk(s)
+            elif v is not None and hasattr(v, "__dict__"):
+                walk(v)
+    walk(getattr(h, "filters", None))
     return out
-mt53 = set()
-for h in _mt.__dict__.values():
-    if hasattr(h, "handlers"):
-        for h2, _ in h.handlers:
-            f = getattr(h2, "filters", None)
-            if f is not None:
-                mt53 |= _cmd_names53(f)
-for c in ("msubscribe", "msubs", "munsub", "mcheck", "minterval",
-          "mchannel", "mexport", "mimport"):
-    ok(f"/{c} registered", c in mt53, str(sorted(mt53)))
-ok("no dup of existing commands",
-   not mt53 & {"settings", "usettings", "export", "import", "queue"})
-ok("menu registers v5.3 tracker commands",
-   all(c in Path("cantarella/telegram/utils.py").read_text()
-       for c in ("minterval", "mchannel", "mexport", "mimport")))
-ok("VERSION == 5.3.0", __import__("config").VERSION == "5.3.0")
+
+engine_cmds = set()
+for h, _ in ra.added:
+    engine_cmds |= _collect_commands(h)
+expected = {"search", "list", "del", "check", "stop", "info",
+            "msettings", "usersettings", "cbroadcast", "banned", "dbstats", "deluser"}
+ok("engine commands registered", expected <= engine_cmds,
+   str(sorted(expected - engine_cmds)))
+forbidden = {"start", "help", "settings", "usettings", "ban", "unban",
+             "broadcast", "stats", "eval", "sh"}
+ok("ZERO duplicate commands vs AnimeDL",
+   not (engine_cmds & forbidden), str(sorted(engine_cmds & forbidden)))
+
+# ══ 7. engine details: fsub off, shared helpers, scraper attrs ══════════════
+print("— engine details")
+from mangarepo.plugins.fsub import get_not_subscribed
+ok("fsub disabled when no channels",
+   loop.run_until_complete(get_not_subscribed(ra, 7)) == [])
+from mangarepo.plugins.check.shared import (parse_chap_num, cancel_download,
+                                            is_download_cancelled, clear_cancel_flag)
+ok("parse_chap_num", parse_chap_num("Chapter 100") == 100.0)
+cancel_download(7, sid1)
+ok("cancel flag roundtrip", is_download_cancelled(7, sid1))
+clear_cancel_flag(7, sid1)
+ok("clear flag", not is_download_cancelled(7, sid1))
+src_inst = MSRC.ComickWebs()
+ok("scraper instance exposes base url",
+   any(hasattr(src_inst, a) for a in ("base_url", "url", "BASE_URL", "api_url")))
+from mangarepo.plugins.settings.shared import get_temp_dir, _s, _set
+ok("settings helpers", get_temp_dir(7) is not None and _s(True) == "●" and _set(False) == "◇")
+
+# ══ 8. no upstream branding user-facing + old code gone ═════════════════════
+print("— branding + cleanup")
+bad = []
+for f in Path("mangarepo/plugins").rglob("*.py"):
+    txt = f.read_text()
+    if "t.me/codexnano" in txt:
+        bad.append(str(f))
+ok("no upstream telegram links", not bad, str(bad))
+ok("our old manga code deleted",
+   not Path("cantarella/telegram/plugins/manga.py").exists()
+   and not Path("manga_sources").exists() and not Path("sources").exists())
+utils_src = Path("cantarella/telegram/utils.py").read_text()
+for c in ("manga", "msubscribe", "msearch", "mcheck", "minterval", "mchannel",
+          "mexport", "mimport", "minfo", "mqueue", "mclean", "mrefresh", "mpost"):
+    ok(f"menu: old /{c} removed", f'BotCommand("{c}"' not in utils_src)
+for c in ("search", "list", "check", "stop", "info", "msettings",
+          "dbstats", "usersettings"):
+    ok(f"menu: /{c} present", f'BotCommand("{c}"' in utils_src)
+help_src = Path("Script.py").read_text()
+ok("help shows the engine", "35 ᴍᴀɴɢᴀ ꜱᴏᴜʀᴄᴇꜱ" in help_src)
+ok("VERSION == 6.0.0", __import__("config").VERSION == "6.0.0")
 
 n_fail = sum(1 for _, c in PASS if not c)
 print(f"\n═══ test_manga: {len(PASS) - n_fail}/{len(PASS)} passed ═══")

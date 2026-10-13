@@ -126,7 +126,7 @@ os.environ["ANIMEDL_SUBS"] = "0"
 ok("ANIMEDL_SUBS=0 gate", embed_subtitles(final, [f"http://127.0.0.1:{PORT}/en.vtt"]) is False)
 os.environ.pop("ANIMEDL_SUBS", None)
 from config import VERSION
-ok("VERSION", VERSION == "5.3.0", VERSION)
+ok("VERSION", VERSION == "6.0.0", VERSION)
 
 httpd.shutdown()
 fails = [n for n, c in PASS if not c]
